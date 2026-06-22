@@ -1,0 +1,2 @@
+- When you change the code and at the end update the Readme.md file
+- Don't install linux packages
