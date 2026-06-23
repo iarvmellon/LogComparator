@@ -1,8 +1,8 @@
 # LogComparator
 
-LogComparator is a Windows desktop utility for downloading TANGO logs and
-building complete, readable transaction flows from PTMS/SPDH and OPN/ISO audit
-streams.
+LogComparator is a Windows desktop utility for loading TANGO logs from a local
+log folder or from SSH/SCP (UAT), then building complete, readable
+transaction flows from PTMS/SPDH and OPN/ISO audit streams.
 
 The project directory is:
 
@@ -20,30 +20,100 @@ C:\Users\j.arvanitis\Desktop\Tango\Logs\LogComparator
 
 Running `main.py` without local audit arguments starts the GUI:
 
-1. Connect to the configured TANGO server with Windows OpenSSH.
-2. List remote `tango.log*` files.
-3. Show their dates in a calendar; valid dates are highlighted.
-4. Require a bank/acquirer selection.
-5. Optionally accept an exact `TransUID`.
-6. Locate the daily Tango log, PTMS audit, and selected bank OPN audit.
-7. Download missing files into the bank's `source` directory.
-8. Parse all selected audit files as one chronological dataset.
-9. Group records into complete transaction flows.
-10. Generate a full log and a summary log for every selected transaction.
+1. Open the main `LogComparator` application window.
+   The window opens maximized.
+2. Use **Tools > Import** for local files, or **File > SSH/SCP (UAT)** for UAT
+   download.
+3. Use **File > Export options** to choose `SPDH+ISO`, `ISO`, or `SPDH`,
+   whether byte/data sections are included, and which audit blocks are exported.
+4. The generated-file and byte/data options are also available in the options
+   bar directly below the menu. `Open`, `Export`, and `Compare` are also
+   available under the **Tools** menu.
+5. For `Log folder`, use **Tools > Import** to select a local folder that
+   contains the daily Tango log, PTMS audit, and selected bank OPN audit,
+   compressed or uncompressed. No calendar is shown for this mode; the date is
+   read from the folder's `tango.log...` filename. The selected path appears in
+   the read-only `Log folder` field.
+6. For `SSH/SCP (UAT)`, a separate calendar window opens automatically after
+   the remote `tango.log*` list is loaded.
+7. Select a date in the SSH/SCP calendar when using SSH/SCP mode. The selected
+   day's `tango.log*`, `audit.PTMS...`, and all `audit.OPN...` files are
+   downloaded and extracted immediately under `LogComparator\<YYYY-MM-DD>_UAT`.
+   The extracted folder path is written into the `Log folder` field.
+   Progress is shown in the bottom-right progress bar of the main window while
+   files are downloaded and extracted.
+8. Select a bank/acquirer, and optionally enter `TransUID`, `STAN`, `RRN`,
+   `AuthCode`, `responseCodeSPDH`, or `responseCodeISO` filters. The bank list
+   contains only choices matching the available `audit.OPN...` files in the
+   selected/extracted folder.
+   After a bank/acquirer is selected, the transaction list is populated.
+9. Locate the daily Tango log, PTMS audit, and selected bank OPN audit.
+10. Use the cached/extracted source files for parsing.
+11. Parse all selected audit files as one chronological dataset.
+12. Group records into complete transaction flows.
+13. Press `Export` or use **Tools > Export** to create one `.log` file for
+    every selected transaction/row that matches the filters. The main window
+    remains open and reports completion or errors in the GUI.
+14. Select one or more transaction rows and press `Open` to export them and open
+    the generated `.log` files in Notepad++.
+15. Select exactly two transaction rows to enable `Compare`; pressing it exports
+    both logs and opens them in WinMerge.
 
-Progress, errors, and completion statistics are printed in the console. No
-completion dialog is opened after the calendar closes.
+Use **Help > About** to view the program version and author (`IARV`).
+
+Progress, errors, and completion statistics are printed in the console.
 
 ## GUI controls
 
+### Environment
+
+The source is selected as follows:
+
+- `Log folder`: use **Tools > Import** to select a local folder with the source files. The
+  folder should contain one daily `tango.log...` file, one
+  `audit.PTMSPMLN01...` file, and one selected-bank `audit.OPN...` file for the
+  target date. Files may be plain text or `.gz`.
+- `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
+  all UAT source files for that day into `LogComparator\<YYYY-MM-DD>_UAT`.
+
+Log folder files are copied into the exported output `source` directory before
+analysis. The original log folder is not modified. If both plain and `.gz`
+versions of the same source file are present, the plain file is preferred to
+avoid duplicate audit blocks.
+
+For `Log folder`, the main window shows a read-only folder path field. The
+folder must contain one daily log set; if multiple `tango.log...` dates are
+present, the run is rejected so the output date is not ambiguous.
+
+For `SSH/SCP (UAT)`, the calendar opens automatically in a separate window when
+the mode is selected. After choosing a highlighted date, all matching UAT source
+files are downloaded and extracted, then the selected date is shown in the main
+window and the extracted `<YYYY-MM-DD>_UAT` path is written into the
+`Log folder` field. Use **File > SSH/SCP (UAT)** to choose another date.
+
 ### Calendar
 
-Only highlighted dates can be selected. The selected date determines the
-`tango.log` and audit filenames searched on the server.
+The calendar is used only for `SSH/SCP (UAT)` and opens in a separate window.
+Only highlighted dates can be selected. Selecting a date downloads:
+
+- `tango.log*`
+- `audit.PTMSPMLN01...`
+- all `audit.OPN...` files
+
+The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
 
 ### Bank/Acquirer
 
 The bank controls the OPN audit process and the bank-filtering rules.
+It is disabled until a source is available: import a folder with
+**Tools > Import**, or select an SSH/SCP date first. The `TransUID`,
+`STAN`, `RRN`, `AuthCode`, `responseCodeSPDH`, and `responseCodeISO` filter
+fields are disabled in the same way.
+
+The bank list is built from the `audit.OPN...` files found in the active source
+folder. For example, a folder containing `audit.OPNBISOBKT01...` enables
+`AKTIF/BKT`; a folder containing `audit.OPNBISOCAS01...` enables the CASYS
+bank/acquirer choices mapped to that audit process.
 
 | GUI bank | OPN process |
 | --- | --- |
@@ -63,19 +133,99 @@ selected OPN process or a configured acquirer identifier for that bank. This
 prevents, for example, an OTP PTMS-only flow from being written into
 `CASYS_FIBANK`.
 
+### Transaction List
+
+Selecting a bank/acquirer scans the active source folder and shows the matching
+transactions in a table with:
+
+- Date/Time
+- transUid
+- RRN
+- STAN
+- AuthCode
+- TransactionType
+- responseCodeSPDH
+- responseCodeISO
+
+Click any column header to sort the displayed rows by that column. The table
+supports selecting one or more rows. If rows are selected when `Export` runs,
+only those selected transUIDs are exported. While the list is being built, the
+bottom-right progress bar shows `Load transactions` with a determinate
+percentage. Loaded rows are cached per bank/date/source-file fingerprint so
+returning to the same selection is fast. The transaction-list scan uses an
+in-memory fast path and skips uncorrelated no-`transUId` blocks; the full export
+still performs complete correlation for the generated `.log`.
+
+`Open` exports the selected row(s) first, then opens the generated `.log` files
+with Notepad++. `Compare` is enabled only when exactly two rows are selected; it
+exports both logs and opens them in WinMerge. The program looks for
+`notepad++.exe` and `WinMergeU.exe` in `PATH` and in the standard 32-bit/64-bit
+Program Files install folders. Selected-row `Open` and `Compare` use a targeted
+export path that extracts only the audit blocks containing the selected
+`transUId` values, so they are much faster than exporting a full day.
+
+The TransUID, RRN, STAN, AuthCode, responseCodeSPDH, and responseCodeISO fields
+also act as live filters for the transaction table.
+
 ### TransUID
 
-The TransUID field is optional:
+The TransUID, STAN, RRN, AuthCode, responseCodeSPDH, and responseCodeISO fields
+are optional:
 
-- Empty: generate every transaction that matches the selected bank.
-- Filled: generate only the exact matching `transUId`.
+- Empty fields: export every transaction that matches the selected bank.
+- Filled fields: export only transactions matching all filled values.
 
 A targeted run does not create `NO_TRANSUID.log` and does not delete or
 rewrite unrelated existing transaction files.
 
-## Downloads and cache
+### Generated Files
 
-Downloaded files are stored under:
+The generated file type is selected from **File > Export options** or
+from the `Generated files` controls below the menu:
+
+- `SPDH+ISO`: write both PTMS/SPDH and OPN/ISO audit blocks.
+- `ISO`: write only OPN/ISO audit blocks.
+- `SPDH`: write only PTMS/SPDH audit blocks.
+
+When a protocol is selected, only matching audit blocks are written inside each
+exported transaction file. The unassigned `NO_TRANSUID.log` file is not produced
+for protocol-filtered runs.
+
+### Byte/Data
+
+The same **File > Export options** menu and the `Byte/Data` checkbox
+below the menu control verbose payload sections:
+
+- `Include byte/data`: keep the full detailed data sections in full
+  transaction logs.
+- `Exclude byte/data`: remove `Raw data (hex):` and `Bus data:` sections from
+  exported logs.
+
+When `Exclude byte/data` is selected, `Raw data (hex):` and `Bus data:` are
+removed from the exported `.log`.
+
+The audit block checkboxes beside `Byte/Data` control which block categories are
+written into the exported `.log`:
+
+- `Tango Internal`: internal TANGO request/response audit blocks.
+- `Tango->Network`: outgoing external audit blocks.
+- `Network->Tango`: incoming external audit blocks.
+
+## Source cache
+
+For `SSH/SCP (UAT)`, source files are downloaded and extracted under:
+
+```text
+LogComparator\<YYYY-MM-DD>_UAT
+```
+
+Exported transaction logs for UAT are written under:
+
+```text
+LogComparator\<BANK>\<YYYY-MM-DD>
+```
+
+For both `Log folder` and `SSH/SCP (UAT)`, source files are copied under:
 
 ```text
 LogComparator\<BANK>\<YYYY-MM-DD>\source
@@ -84,14 +234,15 @@ LogComparator\<BANK>\<YYYY-MM-DD>\source
 The bank name is made Windows-safe, so `CASYS/FIBANK` becomes
 `CASYS_FIBANK`.
 
-If a remote basename already exists locally, SCP is skipped:
+For both modes, if a basename already exists locally, the download/copy is
+skipped:
 
 ```text
 Using existing file: ...
 ```
 
-If a downloaded `.gz` file already has a decompressed sibling, decompression
-is also skipped:
+If a `.gz` file already has a decompressed sibling, decompression is also
+skipped:
 
 ```text
 Using existing decompressed file: ...
@@ -134,8 +285,7 @@ Example:
 ```text
 LogComparator\CASYS_FIBANK\
     2026-06-19\
-        20260619_082537_<transUId>_<RRN>_Purchase_Approved(00)_Approved(000).log
-        20260619_082537_<transUId>_<RRN>_Purchase_Approved(00)_Approved(000)_summary.log
+        <transUId>.log
         NO_TRANSUID.log
         source\
             tango.log.2026-06-19
@@ -143,40 +293,40 @@ LogComparator\CASYS_FIBANK\
             audit.OPNBISOCAS01.2026-06-19
 ```
 
-Every normal transaction produces two files:
+Every normal transaction produces one file:
 
-1. `<transaction>.log`
-2. `<transaction>_summary.log`
+```text
+<transUId>.log
+```
 
-When a transaction is regenerated with a changed filename, old filename
-variants for the same `transUId` are removed.
+Blocks without a `transUId` are written to `NO_TRANSUID.log` during a full run.
+When a transaction is regenerated, old filename variants for the same
+`transUId` are removed.
 
 ## Filename format
 
 ```text
-YYYYMMdd_HHmmss_<transUId>_<RRN>_<TRANSACTION_NAME>_<ISO_DESCRIPTION>(<ISO_RC>)_<SPDH_DESCRIPTION>(<SPDH_RC>).log
+<transUId>.log
+NO_TRANSUID.log
 ```
 
 Rules:
 
-- The timestamp is the earliest request timestamp.
-- Missing date/time becomes `UNKNOWN_DATETIME`.
-- Missing RRN becomes `NO_RRN` in the filename.
-- Missing response code becomes `Not_available(NA)`.
-- An unmapped response code becomes `Unknown_response_code(<value>)`.
+- Full transaction logs are named only by the TANGO `transUId`.
+- Records with no `transUId` go to `NO_TRANSUID.log`.
+- The selected export type controls which audit blocks are written inside the
+  `.log`; it does not change the filename.
 - Windows-unsafe characters are normalized.
-- The ISO RC appears before the SPDH RC.
 
 Example:
 
 ```text
-20260619_082537_36178713733611102100139_000537001063_Purchase_No_card_record(56)_Invalid_expiration_date(206).log
+36178713733611102100139.log
 ```
 
 ## Full transaction log
 
-Both `.log` and `_summary.log` files begin with a structured transaction
-summary:
+The exported transaction log begins with a structured transaction summary:
 
 ```text
 ###############################################################################
@@ -207,22 +357,8 @@ The transaction summary is followed by `TRANSACTION FLOW`, then:
 3. Internal and external REQUEST/RESPONSE actions.
 4. Complete `Audit data` and `Bus data`.
 
-The full log is the detailed diagnostic artifact.
-
-## Summary log
-
-The `_summary.log` uses the same transaction summary and flow, followed by:
-
-1. Exact matching `tango.log` lines.
-2. Only external PTMS/OPN network audit blocks.
-
-Only these detailed audit directions are included:
-
-- `NETWORK-->TANGO`
-- `TANGO-->NETWORK`
-
-Internal REQUEST/RESPONSE audit blocks are not copied below the diagram.
-`Bus data:` is removed from summary blocks, while `Audit data:` remains.
+The full log is the detailed diagnostic artifact and is the only generated
+transaction file.
 
 ### Diagram labels
 
@@ -263,12 +399,12 @@ failure may stop internally before any OPN/ISO request is sent.
 ## TANGO transaction and reversal MTIs
 
 Business TANGO MTIs take priority over generic ISO/internal-action names when
-choosing the filename transaction description.
+building the transaction summary.
 
 Dots shown in database displays are removed in audit values:
 `4.530` is parsed as `4530`.
 
-| Transaction MTI | Reversal MTI | Filename description |
+| Transaction MTI | Reversal MTI | Description |
 | --- | --- | --- |
 | 4013 | 8707 | Pre-auth Request |
 | 4530 | 4546 | Purchase |
@@ -285,7 +421,7 @@ Dots shown in database displays are removed in audit values:
 | 8706 | 8705 | Pre-auth Completion |
 | 8760 | 8763 | Pre-auth Void |
 
-Reversal filenames use the original description plus `_Reversal`, for
+Reversal descriptions use the original description plus `_Reversal`, for
 example `4546 -> Purchase_Reversal`.
 
 Other supported internal actions include:
@@ -357,6 +493,24 @@ Prepend matching lines from an existing Tango log:
 .\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --tango-log C:\path\to\tango.log -o C:\path\to\output
 ```
 
+Export only one protocol block type in local mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --protocol SPDH+ISO -o C:\path\to\output
+```
+
+Remove verbose byte/data sections in local mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --exclude-byte-data -o C:\path\to\output
+```
+
+Filter by STAN, RRN, or AuthCode in local mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --stan 123456 --rrn 000358000879 --authcode A1B2C3 -o C:\path\to\output
+```
+
 Without positional audit files, `main.py` opens the GUI.
 
 ## Installation
@@ -364,10 +518,18 @@ Without positional audit files, `main.py` opens the GUI.
 Requirements:
 
 - Windows with Python 3.
+- Python packages from `requirements.txt`.
+
+Additional `SSH/SCP (UAT)` requirements:
+
 - Windows OpenSSH `ssh` and `scp` on `PATH`.
 - Network access to the configured server.
 - Permission to run the required remote commands through `sudo`.
-- Python packages from `requirements.txt`.
+
+Optional GUI integration tools:
+
+- Notepad++ for the `Open` button.
+- WinMerge for the `Compare` button.
 
 Setup:
 
@@ -381,7 +543,7 @@ python main.py
 
 ## Configuration
 
-The following values are configured near the top of `main.py`:
+The following values are configured near the top of `log_core.py`:
 
 - SSH host, port, user, and timeout.
 - Remote Tango log and audit directories.
@@ -393,12 +555,12 @@ The following values are configured near the top of `main.py`:
 - Correlation window.
 
 Security note: the sudo password is currently stored as plain text in
-`main.py`. Keep the repository and its copies appropriately protected.
+`log_core.py`. Keep the repository and its copies appropriately protected.
 
 ## Notepad++ EnhanceAnyLexer
 
 Colored log highlighting requires the **EnhanceAnyLexer** Notepad++ plugin.
-The generated log files remain plain text and can be opened without the plugin,
+The exported log files remain plain text and can be opened without the plugin,
 but the blue and red highlighting described below will not be available.
 
 ### Plugin installation
@@ -440,7 +602,7 @@ The equivalent generic path is:
 After copying the file:
 
 1. Restart Notepad++ completely.
-2. Open a generated `.log` or `_summary.log` file.
+2. Open an exported `.log` file.
 3. Ensure its Notepad++ language is **Normal text**, because the rules are under
    the `[normal text]` section of the configuration.
 4. If an already-open log does not refresh, close and reopen its tab or switch
@@ -503,7 +665,7 @@ security/action MTIs are not automatically assigned an unrelated business type.
 
 ### Old filenames remain
 
-Run the analysis again for the same transaction. Generated variants for that
+Run the analysis again for the same transaction. Exported variants for that
 `transUId` are cleaned when the transaction is regenerated. Targeted runs do
 not remove unrelated transactions.
 
@@ -512,16 +674,19 @@ not remove unrelated transactions.
 The calendar periodically returns control to Python so Ctrl+C can be processed.
 SSH/SCP subprocesses are also bounded by configured timeouts.
 
-### No new download occurs
+### No new download or copy occurs
 
 The source cache is active. Remove the corresponding file from the bank and
-date-specific `source` directory when a fresh download is required.
+date-specific `source` directory when a fresh SSH/SCP download or log-folder
+copy is required.
 
 ## Project files
 
 | File | Purpose |
 | --- | --- |
-| `main.py` | GUI, SSH/SCP, parsing, correlation, naming, and output generation |
+| `main.py` | Small CLI/GUI entrypoint |
+| `gui_app.py` | Tkinter GUI, SSH/SCP workflow, Open/Export/Compare actions |
+| `log_core.py` | Parsing, transaction correlation, log export, local source handling, mappings, and response-code logic |
 | `requirements.txt` | Python dependency pins |
 | `README.md` | Project behavior and operational documentation |
 | `AGENTS.md` | Repository-specific development instructions |
