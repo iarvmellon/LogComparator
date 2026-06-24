@@ -156,7 +156,12 @@ bottom-right progress bar shows `Load transactions` with a determinate
 percentage. Loaded rows are cached per bank/date/source-file fingerprint so
 returning to the same selection is fast. The transaction-list scan uses an
 in-memory fast path that extracts only audit blocks containing `transUId` and
-skips uncorrelated no-`transUId` blocks; the full export still performs complete
+skips uncorrelated no-`transUId` blocks. For speed, the list parser reads only
+the fields needed by the table and filters, and ignores the heavy `Raw data`
+payload while building rows. The same scan also keeps the matching audit block
+text in memory for the current app session, so selected-row `Open`, `Export`,
+and `Compare` can write one or two transaction logs immediately without
+rescanning very large audit files. Full-day exports still perform complete
 correlation for the generated `.log`.
 
 When a bank/acquirer has more than one OPN audit file for the same date, all
@@ -171,7 +176,8 @@ exports both logs and opens them in WinMerge. The program looks for
 `notepad++.exe` and `WinMergeU.exe` in `PATH` and in the standard 32-bit/64-bit
 Program Files install folders. Selected-row `Open` and `Compare` use a targeted
 export path that extracts only the audit blocks containing the selected
-`transUId` values, so they are much faster than exporting a full day.
+`transUId` values from the in-memory block cache when available, so they are
+much faster than exporting a full day.
 
 The TransUID, RRN, STAN, AuthCode, responseCodeSPDH, and responseCodeISO fields
 also act as live filters for the transaction table.
@@ -528,17 +534,16 @@ Requirements:
 
 - Windows with Python 3.
 - Python packages from `requirements.txt`.
+- Notepad++ installed. It is required for the `Open` action.
+- WinMerge installed. It is required for the `Compare` action.
+- The Notepad++ **EnhanceAnyLexer** plugin installed. It is required for the
+  supplied color highlighting rules.
 
 Additional `SSH/SCP (UAT)` requirements:
 
 - Windows OpenSSH `ssh` and `scp` on `PATH`.
 - Network access to the configured server.
 - Permission to run the required remote commands through `sudo`.
-
-Optional GUI integration tools:
-
-- Notepad++ for the `Open` button.
-- WinMerge for the `Compare` button.
 
 Setup:
 

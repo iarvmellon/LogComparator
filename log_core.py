@@ -368,6 +368,10 @@ SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._()\\-]+")
 SECTION_SEPARATOR = "#" * 79
 TRANS_UID_MARKER_RE = re.compile(r"transUId|transUid")
 FILE_TEXT_CACHE: dict[tuple[str, int, int], str] = {}
+AUDIT_BLOCK_TEXT_CACHE: dict[
+    tuple[tuple[str, int, int], ...],
+    dict[str, list[tuple[int, str]]],
+] = {}
 LIST_FIELD_NAMES = {
     "transuid",
     "originmti",
@@ -394,8 +398,6 @@ LIST_FIELD_NAMES = {
     "trmuid",
     "msguid",
 }
-
-
 @dataclass
 class BlockMeta:
     index: int
@@ -530,6 +532,29 @@ def without_raw_data(text: str) -> str:
 
 def without_byte_data(text: str) -> str:
     return without_bus_data(without_raw_data(text))
+
+
+def without_raw_data_fast(text: str) -> str:
+    raw_start = -1
+    for marker in ("\nRaw data (hex):", "\r\nRaw data (hex):"):
+        raw_start = text.find(marker)
+        if raw_start != -1:
+            break
+    if raw_start == -1:
+        return text
+    next_starts = [
+        position
+        for marker in (
+            "\nAudit data:",
+            "\r\nAudit data:",
+            "\nBus data:",
+            "\r\nBus data:",
+        )
+        if (position := text.find(marker, raw_start + 1)) != -1
+    ]
+    if not next_starts:
+        return text[:raw_start]
+    return text[:raw_start] + text[min(next_starts) :]
 
 
 def format_flow_diagram(
@@ -716,47 +741,103 @@ def parse_block(text: str, index: int) -> BlockMeta:
 
 
 def parse_block_for_list(text: str, index: int) -> BlockMeta:
+    parse_text = without_raw_data_fast(text)
     fields: dict[str, list[str]] = defaultdict(list)
-    for match in FIELD_RE.finditer(text):
-        name = match.group("name").strip().lower()
-        if name in LIST_FIELD_NAMES:
-            fields[name].append(match.group("value").strip())
-
     audit_values: dict[str, list[str]] = defaultdict(list)
-    for match in AUDIT_VALUE_RE.finditer(text):
-        name = match.group("name").strip().lower()
-        if name in LIST_FIELD_NAMES:
-            audit_values[name].append(match.group("value").strip())
-
     plain: dict[str, list[str]] = defaultdict(list)
     message_type = ""
     process_name = ""
     flow_dir = ""
     flow_type = ""
-    for line in text.splitlines()[:40]:
-        match = PLAIN_VALUE_RE.match(line)
-        if not match:
-            continue
-        name = match.group(1).strip().lower().replace(" ", "")
-        value = match.group(2).strip()
-        if name in {
-            "messagetype",
-            "processname",
-            "flowdir",
-            "flowtype",
-            "transuid",
-            "rrn",
-            "responsecode",
-        }:
-            plain[name].append(value)
-        if name == "messagetype":
-            message_type = value
-        elif name == "processname":
-            process_name = value
-        elif name == "flowdir":
-            flow_dir = value
-        elif name == "flowtype":
-            flow_type = value
+    timestamp: datetime | None = None
+    for line_number, line in enumerate(parse_text.splitlines()):
+        if line_number < 40:
+            if ":" in line:
+                plain_name, plain_value = line.split(":", 1)
+                name = plain_name.strip().lower().replace(" ", "")
+                value = plain_value.strip()
+                if name in {
+                    "messagetype",
+                    "processname",
+                    "flowdir",
+                    "flowtype",
+                    "transuid",
+                    "rrn",
+                    "responsecode",
+                }:
+                    plain[name].append(value)
+                if name == "messagetype":
+                    message_type = value
+                elif name == "processname":
+                    process_name = value
+                elif name == "flowdir":
+                    flow_dir = value
+                elif name == "flowtype":
+                    flow_type = value
+            if timestamp is None and (
+                line.startswith("RP date time") or line.startswith("SP date time")
+            ):
+                precise_match = re.search(r"timestamp:\s*(\d{14,20})", line)
+                if precise_match:
+                    digits = precise_match.group(1)
+                    base = digits[:14]
+                    fraction = digits[14:20].ljust(6, "0")
+                    try:
+                        timestamp = datetime.strptime(
+                            base + fraction,
+                            "%Y%m%d%H%M%S%f",
+                        )
+                    except ValueError:
+                        timestamp = None
+                if timestamp is None:
+                    date_match = re.search(
+                        r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+                        line,
+                    )
+                    if date_match:
+                        try:
+                            timestamp = datetime.strptime(
+                                date_match.group(1),
+                                "%Y-%m-%d %H:%M:%S",
+                            )
+                        except ValueError:
+                            timestamp = None
+        if "<field" in line and "name=" in line:
+            search_from = 0
+            while True:
+                name_pos = line.find("name=", search_from)
+                if name_pos == -1:
+                    break
+                quote_pos = name_pos + 5
+                if quote_pos >= len(line) or line[quote_pos] not in {"'", '"'}:
+                    search_from = name_pos + 5
+                    continue
+                quote = line[quote_pos]
+                name_end = line.find(quote, quote_pos + 1)
+                if name_end == -1:
+                    break
+                name = line[quote_pos + 1 : name_end].strip().lower()
+                value_start = line.find(">", name_end)
+                value_end = line.find("</field>", value_start + 1)
+                if (
+                    name in LIST_FIELD_NAMES
+                    and value_start != -1
+                    and value_end != -1
+                ):
+                    fields[name].append(line[value_start + 1 : value_end].strip())
+                search_from = name_end + 1
+        if ":" in line and ("asc<" in line or "int<" in line):
+            audit_name, audit_value = line.split(":", 1)
+            if "." in audit_name:
+                audit_name = audit_name.split(".", 1)[1]
+            name = audit_name.strip().lower()
+            if name in LIST_FIELD_NAMES:
+                value_start = audit_value.find("<")
+                value_end = audit_value.find(">", value_start + 1)
+                if value_start != -1 and value_end != -1:
+                    audit_values[name].append(
+                        audit_value[value_start + 1 : value_end].strip()
+                    )
 
     trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
     trans_uid = trans_uids[0] if trans_uids else None
@@ -824,7 +905,7 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
 
     return BlockMeta(
         index=index,
-        timestamp=parse_timestamp(text),
+        timestamp=timestamp,
         is_request=is_request,
         message_type=message_type,
         process_name=process_name,
@@ -1010,6 +1091,10 @@ def file_text_cache_key(path: Path) -> tuple[str, int, int]:
     return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
 
 
+def input_paths_cache_key(input_paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
+    return tuple(file_text_cache_key(path) for path in input_paths)
+
+
 def read_text_cached(path: Path) -> str:
     key = file_text_cache_key(path)
     cached = FILE_TEXT_CACHE.get(key)
@@ -1026,6 +1111,22 @@ def read_text_cached(path: Path) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
     FILE_TEXT_CACHE[key] = text
     return text
+
+
+def cached_target_blocks(
+    input_paths: list[Path],
+    target_uids: set[str] | None,
+) -> list[tuple[int, str]] | None:
+    if not target_uids:
+        return None
+    blocks_by_uid = AUDIT_BLOCK_TEXT_CACHE.get(input_paths_cache_key(input_paths))
+    if blocks_by_uid is None:
+        return None
+    blocks: list[tuple[int, str]] = []
+    for uid in target_uids:
+        blocks.extend(blocks_by_uid.get(uid, []))
+    blocks.sort(key=lambda item: item[0])
+    return blocks
 
 
 def iter_input_blocks(
@@ -1110,12 +1211,18 @@ def scan_transactions(
     transactions: dict[str, Transaction] = {}
     missing_blocks: list[BlockMeta] = []
 
-    for index, text in iter_input_blocks(
-        input_paths,
-        progress_callback,
-        load_into_memory=load_into_memory,
-        target_uids=target_uids,
-    ):
+    cached_blocks = cached_target_blocks(input_paths, target_uids)
+    block_iterable = (
+        cached_blocks
+        if cached_blocks is not None
+        else iter_input_blocks(
+            input_paths,
+            progress_callback,
+            load_into_memory=load_into_memory,
+            target_uids=target_uids,
+        )
+    )
+    for index, text in block_iterable:
         if (
             not correlate_missing
             and "transUId" not in text
@@ -1154,6 +1261,7 @@ def scan_transactions_for_list(
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Transaction]:
     transactions: dict[str, Transaction] = {}
+    blocks_by_uid: dict[str, list[tuple[int, str]]] = defaultdict(list)
     index = 0
     total_bytes = sum(path.stat().st_size for path in input_paths)
     processed_bytes = 0
@@ -1171,12 +1279,14 @@ def scan_transactions_for_list(
             if not block.trans_uid:
                 index += 1
                 continue
+            blocks_by_uid[block.trans_uid].append((index, block_text))
             transaction = transactions.setdefault(
                 block.trans_uid,
                 Transaction(trans_uid=block.trans_uid, first_index=index),
             )
             transaction.add(block)
             index += 1
+    AUDIT_BLOCK_TEXT_CACHE[input_paths_cache_key(input_paths)] = blocks_by_uid
     return transactions
 
 
@@ -1342,11 +1452,17 @@ def write_outputs(
     ] = defaultdict(list)
     uid_by_path: dict[Path, str] = {}
     selected_protocol_suffix = PROTOCOL_SUFFIX_BY_CHOICE.get((protocol_choice or "").strip())
-    for index, text in iter_input_blocks(
-        input_paths,
-        load_into_memory=bool(target_uids),
-        target_uids=target_uids,
-    ):
+    cached_blocks = cached_target_blocks(input_paths, target_uids)
+    block_iterable = (
+        cached_blocks
+        if cached_blocks is not None
+        else iter_input_blocks(
+            input_paths,
+            load_into_memory=bool(target_uids),
+            target_uids=target_uids,
+        )
+    )
+    for index, text in block_iterable:
         block = parse_block(text, index)
         normalized_flow = block.flow_dir.upper().replace(" ", "")
         process_name = block.process_name.upper()
@@ -1354,7 +1470,11 @@ def write_outputs(
             continue
         if selected_protocol_suffix == "ISO" and not process_name.startswith("OPN"):
             continue
-        if normalized_flow == "REQUEST" and not include_internal:
+        is_network_direction = normalized_flow in {
+            "TANGO-->NETWORK",
+            "NETWORK-->TANGO",
+        }
+        if not is_network_direction and not include_internal:
             continue
         if normalized_flow == "TANGO-->NETWORK" and not include_tango_to_network:
             continue
@@ -1376,10 +1496,6 @@ def write_outputs(
         block_text = text if include_byte_data else without_byte_data(text)
         blocks_by_path[target].append((sort_time, index, block_text))
         if uid and uid in filenames:
-            is_network_direction = normalized_flow in {
-                "TANGO-->NETWORK",
-                "NETWORK-->TANGO",
-            }
             if process_name.startswith("PTMS"):
                 if normalized_flow == "NETWORK-->TANGO":
                     label = "[SPDH] NETWORK -> TANGO"

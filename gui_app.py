@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -42,6 +43,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     root.title("LogComparator")
     root.geometry("860x560")
     root.minsize(780, 520)
+    style = ttk.Style(root)
+    heading_font = tkfont.nametofont("TkHeadingFont").copy()
+    heading_font.configure(weight="bold")
+    style.configure("Treeview.Heading", font=heading_font)
     try:
         root.state("zoomed")
     except tk.TclError:
@@ -61,6 +66,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     stan_var = tk.StringVar(root)
     rrn_var = tk.StringVar(root)
     authcode_var = tk.StringVar(root)
+    transaction_type_var = tk.StringVar(root)
     response_code_spdh_var = tk.StringVar(root)
     response_code_iso_var = tk.StringVar(root)
     include_internal_var = tk.BooleanVar(root, value=True)
@@ -84,6 +90,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
     menubar = tk.Menu(root)
     file_menu = tk.Menu(menubar, tearoff=0)
+    edit_menu = tk.Menu(menubar, tearoff=0)
     tools_menu = tk.Menu(menubar, tearoff=0)
     help_menu = tk.Menu(menubar, tearoff=0)
     generated_menu = tk.Menu(file_menu, tearoff=0)
@@ -101,11 +108,13 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             clear_transaction_list()
         has_banks = bool(available_banks)
         bank_combo.configure(state="readonly" if has_banks else "disabled")
-        entry_state = "normal" if folder_text or selected_remote_log else "disabled"
+        has_selected_bank = bool(bank_var.get().strip()) and bank_var.get() in available_banks
+        entry_state = "normal" if has_selected_bank else "disabled"
         trans_uid_entry.configure(state=entry_state)
         stan_entry.configure(state=entry_state)
         rrn_entry.configure(state=entry_state)
         authcode_entry.configure(state=entry_state)
+        transaction_type_entry.configure(state=entry_state)
         response_code_spdh_entry.configure(state=entry_state)
         response_code_iso_entry.configure(state=entry_state)
 
@@ -223,12 +232,22 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     tk.Label(folder_frame, text="Log folder:").pack(side=tk.LEFT, padx=(0, 8))
     folder_entry = tk.Entry(folder_frame, textvariable=folder_var, state="readonly")
     folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    tk.Label(folder_frame, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(14, 8))
+    bank_combo = ttk.Combobox(
+        folder_frame,
+        textvariable=bank_var,
+        values=list(BANK_AUDIT_CODES),
+        state="disabled",
+        width=25,
+    )
+    bank_combo.pack(side=tk.LEFT)
 
     def clear_filters() -> None:
         trans_uid_var.set("")
         stan_var.set("")
         rrn_var.set("")
         authcode_var.set("")
+        transaction_type_var.set("")
         response_code_spdh_var.set("")
         response_code_iso_var.set("")
 
@@ -281,6 +300,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     file_menu.add_separator()
     file_menu.add_command(label="Exit", command=root.destroy)
     menubar.add_cascade(label="File", menu=file_menu)
+    menubar.add_cascade(label="Edit", menu=edit_menu)
     menubar.add_cascade(label="Tools", menu=tools_menu)
     help_menu.add_command(
         label="About",
@@ -428,16 +448,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     select_date_button.pack(side=tk.LEFT, padx=(0, 10))
     fields = tk.Frame(root)
     fields.pack(fill=tk.X, padx=12, pady=(4, 4))
-    tk.Label(fields, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(0, 8))
-    bank_combo = ttk.Combobox(
-        fields,
-        textvariable=bank_var,
-        values=list(BANK_AUDIT_CODES),
-        state="disabled",
-        width=25,
-    )
-    bank_combo.pack(side=tk.LEFT)
-    tk.Label(fields, text="TransUID:").pack(side=tk.LEFT, padx=(14, 8))
+    tk.Label(fields, text="TransUID:").pack(side=tk.LEFT, padx=(0, 8))
     trans_uid_entry = tk.Entry(
         fields,
         textvariable=trans_uid_var,
@@ -469,6 +480,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         state="disabled",
     )
     authcode_entry.pack(side=tk.LEFT)
+    tk.Label(fields, text="TransactionType:").pack(side=tk.LEFT, padx=(14, 8))
+    transaction_type_entry = tk.Entry(
+        fields,
+        textvariable=transaction_type_var,
+        width=18,
+        state="disabled",
+    )
+    transaction_type_entry.pack(side=tk.LEFT)
     tk.Label(fields, text="responseCodeSPDH:").pack(side=tk.LEFT, padx=(14, 8))
     response_code_spdh_entry = tk.Entry(
         fields,
@@ -557,6 +576,25 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             minwidth=80,
             stretch=False,
         )
+
+    def autosize_transaction_columns() -> None:
+        row_font = tkfont.nametofont("TkDefaultFont")
+        padding = 28
+        visible_items = transaction_tree.get_children("")
+        for column_index, column in enumerate(transaction_columns):
+            width = heading_font.measure(column_labels[column]) + padding
+            for item_id in visible_items:
+                values = transaction_tree.item(item_id, "values")
+                if column_index < len(values):
+                    width = max(width, row_font.measure(str(values[column_index])) + padding)
+            transaction_tree.column(
+                column,
+                width=max(width, 80),
+                minwidth=80,
+                stretch=False,
+            )
+
+    autosize_transaction_columns()
     y_scroll = ttk.Scrollbar(
         transaction_frame,
         orient=tk.VERTICAL,
@@ -576,6 +614,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
     def clear_transaction_list() -> None:
         transaction_tree.delete(*transaction_tree.get_children())
+        autosize_transaction_columns()
 
     def row_matches_filters(values: tuple[str, ...]) -> bool:
         filters = {
@@ -583,6 +622,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             "rrn": rrn_var.get().strip(),
             "stan": stan_var.get().strip(),
             "authcode": authcode_var.get().strip(),
+            "transactiontype": transaction_type_var.get().strip(),
             "responsecodespdh": response_code_spdh_var.get().strip(),
             "responsecodeiso": response_code_iso_var.get().strip(),
         }
@@ -599,6 +639,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             if row_matches_filters(values):
                 transaction_tree.insert("", tk.END, iid=uid, values=values)
                 visible_count += 1
+        autosize_transaction_columns()
         if transaction_rows and visible_count == 0:
             status_var.set(
                 f"Loaded transactions: {len(transaction_rows)}; visible after filters: 0"
@@ -797,12 +838,17 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
         root.after(100, poll_load_result)
 
-    bank_combo.bind("<<ComboboxSelected>>", load_transaction_list)
+    def on_bank_selected(event=None) -> None:
+        update_bank_state()
+        load_transaction_list(event)
+
+    bank_combo.bind("<<ComboboxSelected>>", on_bank_selected)
     for filter_var in (
         trans_uid_var,
         rrn_var,
         stan_var,
         authcode_var,
+        transaction_type_var,
         response_code_spdh_var,
         response_code_iso_var,
     ):
@@ -1068,6 +1114,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         compare_button.configure(state=state)
         tools_menu.entryconfig("Compare", state=state)
 
+    def select_all_transactions() -> None:
+        transaction_tree.selection_set(transaction_tree.get_children(""))
+        update_compare_state()
+
+    def clear_transaction_selection() -> None:
+        transaction_tree.selection_remove(transaction_tree.selection())
+        update_compare_state()
+
     open_button = tk.Button(
         command_options,
         text="Open",
@@ -1093,6 +1147,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     compare_button.pack(
         side=tk.LEFT,
     )
+    edit_menu.add_command(label="Clear filters", command=clear_filters)
+    edit_menu.add_separator()
+    edit_menu.add_command(label="Select all transactions", command=select_all_transactions)
+    edit_menu.add_command(label="Clear selection", command=clear_transaction_selection)
     tools_menu.add_command(label="Import", command=import_log_folder)
     tools_menu.add_command(label="Open", command=open_selected_logs)
     tools_menu.add_command(label="Export", command=submit)
@@ -1330,8 +1388,8 @@ def execute_gui_export(
     local_audits: list[Path] = []
     bank_dir = base_output / bank_directory_name(bank)
     date_dir = bank_dir / selected_date
-    if environment == SOURCE_SSH_UAT:
-        source_folder = Path(source_log)
+    if environment in {SOURCE_SSH_UAT, SOURCE_LOG_FOLDER}:
+        source_folder = Path(source_log).parent if environment == SOURCE_LOG_FOLDER else Path(source_log)
         local_logs = list_local_logs(source_folder)
         if not local_logs:
             raise ValueError(f"No tango.log files found in {source_folder}.")
@@ -1353,7 +1411,7 @@ def execute_gui_export(
                     f"audit.{BANK_AUDIT_CODES[bank][:-2]}##"
                 )
             raise ValueError(
-                f"Missing UAT audit file(s) for {bank} on "
+                f"Missing audit file(s) for {bank} on "
                 f"{selected_date}: {', '.join(missing)}"
             )
         local_audits = source_audits
