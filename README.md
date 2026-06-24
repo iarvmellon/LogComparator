@@ -72,14 +72,16 @@ The source is selected as follows:
 - `Log folder`: use **Tools > Import** to select a local folder with the source files. The
   folder should contain one daily `tango.log...` file, one
   `audit.PTMSPMLN01...` file, and one selected-bank `audit.OPN...` file for the
-  target date. Files may be plain text or `.gz`.
+  target date. Files may be plain text or `.gz`; `.gz` files are extracted
+  immediately during import before transactions are scanned.
 - `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
   all UAT source files for that day into `LogComparator\<YYYY-MM-DD>_UAT`.
 
-Log folder files are copied into the exported output `source` directory before
-analysis. The original log folder is not modified. If both plain and `.gz`
-versions of the same source file are present, the plain file is preferred to
-avoid duplicate audit blocks.
+Log folder `.gz` files are extracted in place first. The scanner then reads the
+plain decompressed files, not the compressed files. During export, source files
+are copied into the exported output `source` directory before analysis. If both
+plain and `.gz` versions of the same source file are present, the plain file is
+preferred to avoid duplicate audit blocks.
 
 For `Log folder`, the main window shows a read-only folder path field. The
 folder must contain one daily log set; if multiple `tango.log...` dates are
@@ -121,7 +123,7 @@ bank/acquirer choices mapped to that audit process.
 | CASYS/FIBANK | OPNBISOCAS01 |
 | CASYS/RUBICON | OPNBISOCAS01 |
 | AKTIF/BKT | OPNBISOBKT01 |
-| EURONET/OTP | OPNRENOTP01 |
+| EURONET/OTP | OPNRENOTP01 family, for example OPNRENOTP01 and OPNRENOTP02 |
 | NEXI/ALPHA | OPNBISOA01 |
 | BORICA/PROCREDIT | OPNWAY4B01 |
 | NBG | OPNWAY4N01 |
@@ -153,8 +155,15 @@ only those selected transUIDs are exported. While the list is being built, the
 bottom-right progress bar shows `Load transactions` with a determinate
 percentage. Loaded rows are cached per bank/date/source-file fingerprint so
 returning to the same selection is fast. The transaction-list scan uses an
-in-memory fast path and skips uncorrelated no-`transUId` blocks; the full export
-still performs complete correlation for the generated `.log`.
+in-memory fast path that extracts only audit blocks containing `transUId` and
+skips uncorrelated no-`transUId` blocks; the full export still performs complete
+correlation for the generated `.log`.
+
+When a bank/acquirer has more than one OPN audit file for the same date, all
+files in the same numeric OPN family are loaded together. For example,
+`EURONET/OTP` maps to the `OPNRENOTP01` family, so `audit.OPNRENOTP01...`,
+`audit.OPNRENOTP02...`, and other matching `OPNRENOTP##` files are included when
+they exist.
 
 `Open` exports the selected row(s) first, then opens the generated `.log` files
 with Notepad++. `Compare` is enabled only when exactly two rows are selected; it

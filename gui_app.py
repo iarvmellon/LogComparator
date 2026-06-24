@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import gzip
 import os
 import queue
 import shutil
@@ -223,16 +224,57 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     folder_entry = tk.Entry(folder_frame, textvariable=folder_var, state="readonly")
     folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    def clear_filters() -> None:
+        trans_uid_var.set("")
+        stan_var.set("")
+        rrn_var.set("")
+        authcode_var.set("")
+        response_code_spdh_var.set("")
+        response_code_iso_var.set("")
+
+    def clear_bank_and_transactions() -> None:
+        bank_var.set("")
+        transaction_rows.clear()
+        clear_transaction_list()
+        update_compare_state()
+
     def import_log_folder() -> None:
         folder = filedialog.askdirectory(title="Select log folder")
         if folder:
+            folder_path = Path(folder)
+
+            def update_extract_progress(current: int, total: int, message: str) -> None:
+                percent = (current / total) * 100 if total else 100
+                show_inline_progress(f"{message} ({percent:.0f}%)", percent)
+
+            try:
+                root.config(cursor="watch")
+                status_var.set("Extracting imported files...")
+                show_inline_progress("Extracting imported files", 0)
+                root.update_idletasks()
+                extract_gzip_files_in_folder(
+                    folder_path,
+                    progress_callback=update_extract_progress,
+                )
+            except (OSError, ValueError, gzip.BadGzipFile) as exc:
+                hide_inline_progress()
+                root.config(cursor="")
+                status_var.set(f"Import failed: {exc}")
+                messagebox.showerror("Import failed", str(exc), parent=root)
+                return
+            finally:
+                hide_inline_progress()
+                root.config(cursor="")
+
             if environment_var.get() != SOURCE_LOG_FOLDER:
                 environment_var.set(SOURCE_LOG_FOLDER)
+            clear_filters()
+            clear_bank_and_transactions()
             folder_var.set(folder)
             clear_selected_remote_date()
             update_source_state()
             update_bank_state()
-            status_var.set("")
+            status_var.set(f"Imported log folder: {folder}")
 
     file_menu.add_command(label=SOURCE_SSH_UAT, command=select_ssh_source)
     file_menu.add_cascade(label="Export options", menu=generated_menu)
@@ -356,6 +398,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             selected_remote_log["date"] = selected_date
             selected_remote_log["path"] = selected_path
             selected_remote_log["folder"] = str(uat_folder)
+            clear_filters()
+            clear_bank_and_transactions()
             if not folder_frame.winfo_ismapped():
                 folder_frame.pack(
                     fill=tk.X,
@@ -548,11 +592,22 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 return False
         return True
 
-    def apply_transaction_filters(*_args) -> None:
+    def apply_transaction_filters(*_args) -> int:
         clear_transaction_list()
+        visible_count = 0
         for uid, values in transaction_rows:
             if row_matches_filters(values):
                 transaction_tree.insert("", tk.END, iid=uid, values=values)
+                visible_count += 1
+        if transaction_rows and visible_count == 0:
+            status_var.set(
+                f"Loaded transactions: {len(transaction_rows)}; visible after filters: 0"
+            )
+        elif transaction_rows:
+            status_var.set(
+                f"Loaded transactions: {len(transaction_rows)}; visible: {visible_count}"
+            )
+        return visible_count
 
     def transaction_audit_cache_key(
         bank: str,
@@ -582,11 +637,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         scan_key = transaction_scan_cache_key(audits)
         transactions = transaction_scan_cache.get(scan_key)
         if transactions is None:
-            transactions, _ = scan_transactions(
+            transactions = scan_transactions_for_list(
                 audits,
                 report_scan_progress,
-                load_into_memory=True,
-                correlate_missing=False,
             )
             transaction_scan_cache[scan_key] = transactions
         elif progress_callback:
@@ -594,15 +647,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         if progress_callback:
             progress_callback(88.0, "Build transaction list")
         expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
-        expected_process = BANK_AUDIT_CODES.get(bank)
         matching = [
             transaction
             for transaction in transactions.values()
             if (
                 transaction.acquirer_ids & expected_ids
-                or (
-                    expected_process is not None
-                    and expected_process in transaction.process_names
+                or any(
+                    bank_audit_code_matches(bank, process_name)
+                    for process_name in transaction.process_names
                 )
             )
         ]
@@ -653,9 +705,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         selected_date: str,
     ) -> None:
         transaction_rows[:] = rows
-        apply_transaction_filters()
+        visible_count = apply_transaction_filters()
         selected_date_var.set(selected_date)
-        status_var.set(f"Loaded transactions: {len(rows)}")
+        if not rows:
+            status_var.set("No matching transactions found for this bank/acquirer.")
+        elif visible_count == 0:
+            status_var.set(
+                f"Loaded transactions: {len(rows)}; visible after filters: 0"
+            )
 
     def load_transaction_list(event=None) -> None:
         transaction_load_token["value"] += 1
@@ -715,7 +772,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
             try:
                 rows = build_transaction_rows(bank, audits, report_progress)
-            except (OSError, ValueError) as exc:
+            except Exception as exc:
                 result_queue.put(("error", exc))
             else:
                 result_queue.put(("success", rows))
@@ -1138,13 +1195,20 @@ def download_uat_sources(
 
 def list_remote_audits(selected_date: str, bank: str) -> list[str]:
     audit_code = BANK_AUDIT_CODES[bank]
+    audit_family = audit_code[:-2] + "??" if audit_code[-2:].isdigit() else audit_code
     compact_date = selected_date.replace("-", "")
+    audit_patterns = []
+    audit_patterns.extend(
+        [
+            f"-name 'audit.{audit_family}.*{selected_date}*'",
+            f"-name 'audit.{audit_family}.*{compact_date}*'",
+        ]
+    )
     command = (
         f"find {REMOTE_AUDIT_DIR} -maxdepth 1 -type f \\( "
         f"-name 'audit.PTMSPMLN01.*{selected_date}*' -o "
         f"-name 'audit.PTMSPMLN01.*{compact_date}*' -o "
-        f"-name 'audit.{audit_code}.*{selected_date}*' -o "
-        f"-name 'audit.{audit_code}.*{compact_date}*' \\) -print | sort"
+        f"{' -o '.join(audit_patterns)} \\) -print | sort"
     )
     output = run_remote_command(command, sudo=True)
     paths = [line.strip() for line in output.splitlines() if line.strip()]
@@ -1273,15 +1337,21 @@ def execute_gui_export(
             raise ValueError(f"No tango.log files found in {source_folder}.")
         local_tango_log = Path(local_logs[0])
         source_audits = list_local_audits(source_folder, selected_date, bank)
-        audit_code = BANK_AUDIT_CODES[bank]
         has_ptms = any(path.name.startswith("audit.PTMSPMLN01.") for path in source_audits)
-        has_opn = any(path.name.startswith(f"audit.{audit_code}.") for path in source_audits)
+        has_opn = any(
+            path.name.startswith("audit.")
+            and len(path.name.split(".")) >= 3
+            and bank_audit_code_matches(bank, path.name.split(".")[1])
+            for path in source_audits
+        )
         if not has_ptms or not has_opn:
             missing = []
             if not has_ptms:
                 missing.append("audit.PTMSPMLN01")
             if not has_opn:
-                missing.append(f"audit.{audit_code}")
+                missing.append(
+                    f"audit.{BANK_AUDIT_CODES[bank][:-2]}##"
+                )
             raise ValueError(
                 f"Missing UAT audit file(s) for {bank} on "
                 f"{selected_date}: {', '.join(missing)}"
@@ -1295,15 +1365,21 @@ def execute_gui_export(
             cache_local_file(Path(source_log), source_dir)
         )
         source_audits = list_local_audits(production_folder, selected_date, bank)
-        audit_code = BANK_AUDIT_CODES[bank]
         has_ptms = any(path.name.startswith("audit.PTMSPMLN01.") for path in source_audits)
-        has_opn = any(path.name.startswith(f"audit.{audit_code}.") for path in source_audits)
+        has_opn = any(
+            path.name.startswith("audit.")
+            and len(path.name.split(".")) >= 3
+            and bank_audit_code_matches(bank, path.name.split(".")[1])
+            for path in source_audits
+        )
         if not has_ptms or not has_opn:
             missing = []
             if not has_ptms:
                 missing.append("audit.PTMSPMLN01")
             if not has_opn:
-                missing.append(f"audit.{audit_code}")
+                missing.append(
+                    f"audit.{BANK_AUDIT_CODES[bank][:-2]}##"
+                )
             raise ValueError(
                 f"Missing production audit file(s) for {bank} on "
                 f"{selected_date}: {', '.join(missing)}"

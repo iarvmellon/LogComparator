@@ -366,6 +366,34 @@ DATA_SECTION_END_RE = re.compile(
 )
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._()\\-]+")
 SECTION_SEPARATOR = "#" * 79
+TRANS_UID_MARKER_RE = re.compile(r"transUId|transUid")
+FILE_TEXT_CACHE: dict[tuple[str, int, int], str] = {}
+LIST_FIELD_NAMES = {
+    "transuid",
+    "originmti",
+    "tgoriginmti",
+    "mti",
+    "msgid",
+    "retrievrefnumber",
+    "retrievalreferencenumber",
+    "rrn",
+    "processingcode",
+    "transactiontype",
+    "responsecode",
+    "acqid",
+    "acquirerid",
+    "acquiringinstid",
+    "stan",
+    "auditnumber",
+    "origauditnumber",
+    "transseqno",
+    "authcode",
+    "authid",
+    "approvalcode",
+    "authorizationcode",
+    "trmuid",
+    "msguid",
+}
 
 
 @dataclass
@@ -687,6 +715,131 @@ def parse_block(text: str, index: int) -> BlockMeta:
     )
 
 
+def parse_block_for_list(text: str, index: int) -> BlockMeta:
+    fields: dict[str, list[str]] = defaultdict(list)
+    for match in FIELD_RE.finditer(text):
+        name = match.group("name").strip().lower()
+        if name in LIST_FIELD_NAMES:
+            fields[name].append(match.group("value").strip())
+
+    audit_values: dict[str, list[str]] = defaultdict(list)
+    for match in AUDIT_VALUE_RE.finditer(text):
+        name = match.group("name").strip().lower()
+        if name in LIST_FIELD_NAMES:
+            audit_values[name].append(match.group("value").strip())
+
+    plain: dict[str, list[str]] = defaultdict(list)
+    message_type = ""
+    process_name = ""
+    flow_dir = ""
+    flow_type = ""
+    for line in text.splitlines()[:40]:
+        match = PLAIN_VALUE_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1).strip().lower().replace(" ", "")
+        value = match.group(2).strip()
+        if name in {
+            "messagetype",
+            "processname",
+            "flowdir",
+            "flowtype",
+            "transuid",
+            "rrn",
+            "responsecode",
+        }:
+            plain[name].append(value)
+        if name == "messagetype":
+            message_type = value
+        elif name == "processname":
+            process_name = value
+        elif name == "flowdir":
+            flow_dir = value
+        elif name == "flowtype":
+            flow_type = value
+
+    trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
+    trans_uid = trans_uids[0] if trans_uids else None
+    mti_values = unique_nonempty(
+        fields.get("originmti", [])
+        + fields.get("tgoriginmti", [])
+        + fields.get("mti", [])
+        + audit_values.get("originmti", [])
+        + audit_values.get("tgoriginmti", [])
+        + fields.get("msgid", [])
+        + audit_values.get("msgid", [])
+        + audit_values.get("mti", [])
+        + HEADER_MTI_RE.findall(message_type)
+    )
+    rrn_values = unique_nonempty(
+        fields.get("retrievrefnumber", [])
+        + fields.get("retrievalreferencenumber", [])
+        + fields.get("rrn", [])
+        + audit_values.get("retrievrefnumber", [])
+        + audit_values.get("retrievalreferencenumber", [])
+        + audit_values.get("rrn", [])
+        + plain.get("rrn", [])
+    )
+    processing_codes = unique_nonempty(
+        fields.get("processingcode", [])
+        + fields.get("transactiontype", [])
+        + audit_values.get("processingcode", [])
+        + audit_values.get("transactiontype", [])
+    )
+    response_codes = unique_nonempty(
+        fields.get("responsecode", [])
+        + audit_values.get("responsecode", [])
+        + plain.get("responsecode", [])
+    )
+    acquirer_ids = set(
+        unique_nonempty(
+            fields.get("acqid", [])
+            + fields.get("acquirerid", [])
+            + fields.get("acquiringinstid", [])
+            + audit_values.get("acqid", [])
+            + audit_values.get("acquirerid", [])
+            + audit_values.get("acquiringinstid", [])
+        )
+    )
+
+    identifiers: set[tuple[str, str]] = set()
+    identifier_names = {
+        "rrn": ("retrievrefnumber", "retrievalreferencenumber", "rrn"),
+        "stan": ("stan", "auditnumber", "origauditnumber", "transseqno"),
+        "authcode": ("authcode", "authid", "approvalcode", "authorizationcode"),
+    }
+    for canonical_name, names in identifier_names.items():
+        for name in names:
+            for value in fields.get(name, []) + audit_values.get(name, []) + plain.get(name, []):
+                clean_value = value.strip()
+                if clean_value:
+                    identifiers.add((canonical_name, clean_value))
+
+    flow_values = plain.get("flowdir", [])
+    is_request = any("REQUEST" in value.upper() for value in flow_values)
+    is_request = is_request or any(
+        "REQUEST" in value.upper() for value in plain.get("flowtype", [])
+    )
+    is_request = is_request or "REQUEST" in message_type.upper()
+
+    return BlockMeta(
+        index=index,
+        timestamp=parse_timestamp(text),
+        is_request=is_request,
+        message_type=message_type,
+        process_name=process_name,
+        flow_dir=flow_dir,
+        flow_type=flow_type,
+        trans_uid=trans_uid,
+        mti_values=mti_values,
+        rrn_values=rrn_values,
+        processing_codes=processing_codes,
+        response_codes=response_codes,
+        acquirer_ids=acquirer_ids,
+        identifiers=identifiers,
+    )
+
+
 def select_iso_mti(transaction: Transaction) -> str:
     candidates = transaction.request_mtis + transaction.mtis
     # Prefer business TANGO MTIs over ISO and internal security/action MTIs.
@@ -831,6 +984,50 @@ def iter_target_blocks_from_text(
             yield block_text
 
 
+def iter_marker_blocks_from_text(
+    text: str,
+    marker_pattern: re.Pattern[str],
+) -> Iterator[str]:
+    seen_ranges: set[tuple[int, int]] = set()
+    for match in marker_pattern.finditer(text):
+        start = text.rfind(SEPARATOR_PREFIX, 0, match.start())
+        if start == -1:
+            start = 0
+        end = text.find(SEPARATOR_PREFIX, match.end())
+        if end == -1:
+            end = len(text)
+        block_range = (start, end)
+        if block_range in seen_ranges:
+            continue
+        seen_ranges.add(block_range)
+        block_text = text[start:end]
+        if block_text:
+            yield block_text
+
+
+def file_text_cache_key(path: Path) -> tuple[str, int, int]:
+    stat = path.stat()
+    return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+def read_text_cached(path: Path) -> str:
+    key = file_text_cache_key(path)
+    cached = FILE_TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    path_key = key[0]
+    stale_keys = [
+        existing_key for existing_key in FILE_TEXT_CACHE if existing_key[0] == path_key
+    ]
+    for stale_key in stale_keys:
+        del FILE_TEXT_CACHE[stale_key]
+
+    text = path.read_text(encoding="utf-8", errors="replace")
+    FILE_TEXT_CACHE[key] = text
+    return text
+
+
 def iter_input_blocks(
     input_paths: list[Path],
     progress_callback: Callable[[int, int, str], None] | None = None,
@@ -857,7 +1054,7 @@ def iter_input_blocks(
 
     for input_path in input_paths:
         if load_into_memory:
-            text = input_path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_cached(input_path)
             processed_bytes += input_path.stat().st_size
             report(input_path, force=True)
             if target_pattern is not None:
@@ -952,6 +1149,37 @@ def scan_transactions(
     return transactions, correlated
 
 
+def scan_transactions_for_list(
+    input_paths: list[Path],
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Transaction]:
+    transactions: dict[str, Transaction] = {}
+    index = 0
+    total_bytes = sum(path.stat().st_size for path in input_paths)
+    processed_bytes = 0
+    for input_path in input_paths:
+        text = read_text_cached(input_path)
+        processed_bytes += input_path.stat().st_size
+        if progress_callback:
+            progress_callback(
+                processed_bytes,
+                total_bytes,
+                f"Load transactions: {input_path.name}",
+            )
+        for block_text in iter_marker_blocks_from_text(text, TRANS_UID_MARKER_RE):
+            block = parse_block_for_list(block_text, index)
+            if not block.trans_uid:
+                index += 1
+                continue
+            transaction = transactions.setdefault(
+                block.trans_uid,
+                Transaction(trans_uid=block.trans_uid, first_index=index),
+            )
+            transaction.add(block)
+            index += 1
+    return transactions
+
+
 def collect_tango_lines(
     tango_log_path: Path | None,
     transaction_uids: set[str],
@@ -963,16 +1191,10 @@ def collect_tango_lines(
     uid_pattern = build_uid_pattern(transaction_uids)
     if uid_pattern is None:
         return lines_by_uid
-    with tango_log_path.open(
-        "r",
-        encoding="utf-8",
-        errors="replace",
-        newline="",
-    ) as tango_log:
-        for line in tango_log:
-            matched_uids = {match.group(0) for match in uid_pattern.finditer(line)}
-            for uid in matched_uids:
-                lines_by_uid[uid].append(line)
+    for line in read_text_cached(tango_log_path).splitlines(keepends=True):
+        matched_uids = {match.group(0) for match in uid_pattern.finditer(line)}
+        for uid in matched_uids:
+            lines_by_uid[uid].append(line)
     return lines_by_uid
 
 
@@ -1305,15 +1527,14 @@ def split_audit_files(
     excluded_uids: set[str] = set()
     if bank and not use_target_fast_path:
         expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
-        expected_process = BANK_AUDIT_CODES.get(bank)
         matching = {
             uid: transaction
             for uid, transaction in transactions.items()
             if (
                 transaction.acquirer_ids & expected_ids
-                or (
-                    expected_process is not None
-                    and expected_process in transaction.process_names
+                or any(
+                    bank_audit_code_matches(bank, process_name)
+                    for process_name in transaction.process_names
                 )
             )
         }
@@ -1484,6 +1705,28 @@ def decompress_file(path: Path) -> Path:
     return output_path
 
 
+def extract_gzip_files_in_folder(
+    folder: Path,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> list[Path]:
+    if not folder.is_dir():
+        raise ValueError(f"Local source folder was not found: {folder}")
+    gzip_paths = sorted(
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() == ".gz"
+    )
+    extracted: list[Path] = []
+    total = len(gzip_paths)
+    for index, path in enumerate(gzip_paths, start=1):
+        if progress_callback:
+            progress_callback(index - 1, total, f"Extracting: {path.name}")
+        extracted.append(decompress_file(path))
+        if progress_callback:
+            progress_callback(index, total, f"Extracted: {path.name}")
+    return extracted
+
+
 def cache_local_file(source_path: Path, local_dir: Path) -> Path:
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / source_path.name
@@ -1511,6 +1754,21 @@ def unique_source_files(paths: list[Path]) -> list[Path]:
         if current is None or current.suffix.lower() == ".gz":
             selected[key] = path
     return sorted(selected.values(), key=lambda item: item.name)
+
+
+def audit_code_family_pattern(audit_code: str) -> re.Pattern[str]:
+    match = re.match(r"^(?P<prefix>.*?)(?P<number>\d{2})$", audit_code)
+    if not match:
+        return re.compile(rf"^{re.escape(audit_code)}$")
+    return re.compile(rf"^{re.escape(match.group('prefix'))}\d{{2}}$")
+
+
+def bank_audit_codes(bank: str) -> set[str]:
+    return {BANK_AUDIT_CODES[bank]}
+
+
+def bank_audit_code_matches(bank: str, audit_code: str) -> bool:
+    return bool(audit_code_family_pattern(BANK_AUDIT_CODES[bank]).match(audit_code))
 
 
 def parse_log_date(name: str) -> str | None:
@@ -1553,7 +1811,11 @@ def available_banks_for_folder(folder: Path) -> list[str]:
         audit_code = parts[1]
         if not audit_code.startswith("OPN"):
             continue
-        banks.extend(BANKS_BY_AUDIT_CODE.get(audit_code, []))
+        banks.extend(
+            bank
+            for bank in BANK_AUDIT_CODES
+            if bank_audit_code_matches(bank, audit_code)
+        )
     return [bank for bank in BANK_AUDIT_CODES if bank in set(banks)]
 
 
@@ -1567,14 +1829,19 @@ def path_matches_audit(path: Path, selected_date: str, audit_code: str) -> bool:
 
 
 def list_local_audits(folder: Path, selected_date: str, bank: str) -> list[Path]:
-    audit_code = BANK_AUDIT_CODES[bank]
+    compact_date = selected_date.replace("-", "")
     paths = [
         path
         for path in folder.iterdir()
         if path.is_file()
         and (
             path_matches_audit(path, selected_date, "PTMSPMLN01")
-            or path_matches_audit(path, selected_date, audit_code)
+            or (
+                (selected_date in path.name or compact_date in path.name)
+                and path.name.startswith("audit.")
+                and len(source_file_key(path).split(".")) >= 3
+                and bank_audit_code_matches(bank, source_file_key(path).split(".")[1])
+            )
         )
     ]
     return unique_source_files(paths)
