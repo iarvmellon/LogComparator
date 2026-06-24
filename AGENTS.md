@@ -1,3 +1,4 @@
 - When you change the code and at the end update the Readme.md file
 - Don't install linux packages
-- Creation of executable using command pyinstaller --onefile --name LogComparator main.py
+- Creation of executable using command in <project>/dist folder
+  pyinstaller --onefile --name LogComparator main.py
