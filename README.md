@@ -60,7 +60,17 @@ Running `main.py` without local audit arguments starts the GUI:
 15. Select exactly two transaction rows to enable `Compare`; pressing it exports
     both logs and opens them in WinMerge.
 
-Use **Help > About** to view the program version and author (`IARV`).
+Use **Help > About** to view the program version and author (`IARV`). The
+version is stored as a static value in `version.py`, so it is available even
+when the application runs as an `.exe` or on a machine without git/Python. The
+tracked pre-commit hook in `.githooks/pre-commit` updates `version.py` before
+each commit using `MAJOR.MINOR.<next commit count>`.
+
+Enable the tracked hook once per clone:
+
+```powershell
+git config core.hooksPath .githooks
+```
 
 Progress, errors, and completion statistics are printed in the console.
 

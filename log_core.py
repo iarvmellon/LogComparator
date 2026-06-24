@@ -21,12 +21,14 @@ from typing import Callable, Iterator, TextIO
 
 from tkcalendar import Calendar
 
+from version import VERSION
+
 
 DEFAULT_INPUT = Path(
     r"C:\Users\j.arvanitis\Desktop\Tango\Logs\audit.OPNBISOBKT01.2026-03-06"
 )
 DEFAULT_OUTPUT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Logs\LogComparator")
-APP_VERSION = "1.0.0"
+APP_VERSION = VERSION
 APP_AUTHOR = "IARV"
 DEFAULT_HOST = "10.1.110.84"
 DEFAULT_USER = "j.arvanitis"
