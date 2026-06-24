@@ -211,6 +211,11 @@ RC_SPDH, and RC_ISO fields are optional:
 - Empty fields: export every transaction that matches the selected bank.
 - Filled fields: export only transactions matching all filled values.
 
+Use **View > Columns / Filters...** to choose which transaction fields are
+visible. Each checked item appears both as a table column and as a filter. When
+an item is unchecked, its column and filter are hidden and any value in that
+filter is cleared.
+
 A targeted run does not create `NO_TRANSUID.log` and does not delete or
 rewrite unrelated existing transaction files.
 
@@ -722,8 +727,10 @@ copy is required.
 | File | Purpose |
 | --- | --- |
 | `main.py` | Small CLI/GUI entrypoint |
-| `gui_app.py` | Tkinter GUI, SSH/SCP workflow, Open/Export/Compare actions |
-| `log_core.py` | Parsing, transaction correlation, log export, local source handling, mappings, and response-code logic |
+| `gui_app.py` | Tkinter window layout, menus, filters, transaction table, and user actions |
+| `gui_services.py` | GUI service helpers for SSH/SCP source download, external tool discovery/focus, and GUI export orchestration |
+| `log_config.py` | Application constants, bank/acquirer mappings, protocol choices, MTI names, and ISO/SPDH response-code descriptions |
+| `log_core.py` | Parsing, transaction correlation, log export, local source handling, and response-code lookup logic |
 | `requirements.txt` | Python dependency pins |
 | `README.md` | Project behavior and operational documentation |
 | `AGENTS.md` | Repository-specific development instructions |
