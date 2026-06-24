@@ -10,7 +10,7 @@ import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
@@ -62,6 +62,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     include_byte_data_var = tk.BooleanVar(root, value=True)
     folder_var = tk.StringVar(root)
     bank_var = tk.StringVar(root)
+    timezone_var = tk.StringVar(root, value="UTC")
     trans_uid_var = tk.StringVar(root)
     stan_var = tk.StringVar(root)
     rrn_var = tk.StringVar(root)
@@ -449,11 +450,20 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     select_date_button.pack(side=tk.LEFT, padx=(0, 10))
     fields = tk.Frame(root)
     fields.pack(fill=tk.X, padx=12, pady=(4, 4))
-    tk.Label(fields, text="TransUID:").pack(side=tk.LEFT, padx=(0, 8))
+    tk.Label(fields, text="Timezone:").pack(side=tk.LEFT, padx=(0, 8))
+    timezone_combo = ttk.Combobox(
+        fields,
+        textvariable=timezone_var,
+        values=("UTC", "UTC+1", "UTC+2", "UTC+3", "UTC-1", "UTC-2", "UTC-3"),
+        state="readonly",
+        width=7,
+    )
+    timezone_combo.pack(side=tk.LEFT)
+    tk.Label(fields, text="TransUID:").pack(side=tk.LEFT, padx=(14, 8))
     trans_uid_entry = tk.Entry(
         fields,
         textvariable=trans_uid_var,
-        width=30,
+        width=18,
         state="disabled",
     )
     trans_uid_entry.pack(side=tk.LEFT)
@@ -617,6 +627,29 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         transaction_tree.delete(*transaction_tree.get_children())
         autosize_transaction_columns()
 
+    def selected_timezone_offset_hours() -> int:
+        value = timezone_var.get().strip()
+        if value == "UTC":
+            return 0
+        try:
+            return int(value.replace("UTC", "", 1))
+        except ValueError:
+            return 0
+
+    def display_values_for_timezone(values: tuple[str, ...]) -> tuple[str, ...]:
+        if not values or not values[0]:
+            return values
+        try:
+            utc_datetime = datetime.strptime(values[0], "%Y-%m-%d %H:%M:%S.%f")
+        except ValueError:
+            return values
+        shifted_datetime = utc_datetime + timedelta(
+            hours=selected_timezone_offset_hours()
+        )
+        displayed = list(values)
+        displayed[0] = shifted_datetime.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        return tuple(displayed)
+
     def row_matches_filters(values: tuple[str, ...]) -> bool:
         filters = {
             "transuid": trans_uid_var.get().strip(),
@@ -638,7 +671,12 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         visible_count = 0
         for uid, values in transaction_rows:
             if row_matches_filters(values):
-                transaction_tree.insert("", tk.END, iid=uid, values=values)
+                transaction_tree.insert(
+                    "",
+                    tk.END,
+                    iid=uid,
+                    values=display_values_for_timezone(values),
+                )
                 visible_count += 1
         autosize_transaction_columns()
         if transaction_rows and visible_count == 0:
@@ -844,6 +882,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         load_transaction_list(event)
 
     bank_combo.bind("<<ComboboxSelected>>", on_bank_selected)
+    timezone_combo.bind("<<ComboboxSelected>>", apply_transaction_filters)
     for filter_var in (
         trans_uid_var,
         rrn_var,

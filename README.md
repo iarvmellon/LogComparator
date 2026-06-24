@@ -179,13 +179,18 @@ export path that extracts only the audit blocks containing the selected
 `transUId` values from the in-memory block cache when available, so they are
 much faster than exporting a full day.
 
-The TransUID, RRN, STAN, AuthCode, responseCodeSPDH, and responseCodeISO fields
-also act as live filters for the transaction table.
+The `Timezone` combo changes only how the `Date/Time` column is displayed. The
+source timestamp is treated as UTC; choosing `UTC+1`, `UTC+2`, `UTC+3`,
+`UTC-1`, `UTC-2`, or `UTC-3` shifts the displayed value without changing the
+raw parsed data, filters, or exported logs.
+
+The TransUID, RRN, STAN, AuthCode, TransactionType, responseCodeSPDH, and
+responseCodeISO fields also act as live filters for the transaction table.
 
 ### TransUID
 
-The TransUID, STAN, RRN, AuthCode, responseCodeSPDH, and responseCodeISO fields
-are optional:
+The TransUID, STAN, RRN, AuthCode, TransactionType, responseCodeSPDH, and
+responseCodeISO fields are optional:
 
 - Empty fields: export every transaction that matches the selected bank.
 - Filled fields: export only transactions matching all filled values.
