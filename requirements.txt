@@ -1,4 +1,5 @@
 # Python 3.10 or newer is required.
 # Tkinter must be available (included with the standard Windows Python installer).
-# Notepad++ and EnhanceAnyLexer are optional external tools; see README.md.
+# External prerequisites: Notepad++, WinMerge, and the Notepad++ EnhanceAnyLexer plugin.
+# They are not Python packages and must be installed separately; see README.md.
 tkcalendar==1.6.1

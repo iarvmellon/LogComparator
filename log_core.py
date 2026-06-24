@@ -145,6 +145,7 @@ MTI_NAMES = {
     "6034": "Verify_MAC_Msg_From_PoS",
     "4530": "Financial_Processing",
     "6022": "Generate_MAC_To_POS",
+    "4850": "Close_Batch",
 }
 
 TANGO_TRANSACTION_MTI_NAMES = {
@@ -176,6 +177,7 @@ TANGO_TRANSACTION_MTI_NAMES = {
     "8705": "Pre-auth_Completion_Reversal",
     "8760": "Pre-auth_Void",
     "8763": "Pre-auth_Void_Reversal",
+    "4850": "Close_Batch",
 }
 
 ISO_RC_NAMES = {
@@ -396,6 +398,19 @@ LIST_FIELD_NAMES = {
     "approvalcode",
     "authorizationcode",
     "trmuid",
+    "terminal",
+    "terminalid",
+    "tid",
+    "trmid",
+    "merchantid",
+    "merchant",
+    "mid",
+    "amount",
+    "amt",
+    "transactionamount",
+    "currency",
+    "currencycode",
+    "currcode",
     "msguid",
 }
 @dataclass
@@ -412,6 +427,10 @@ class BlockMeta:
     rrn_values: list[str]
     processing_codes: list[str]
     response_codes: list[str]
+    tids: list[str]
+    mids: list[str]
+    amounts: list[str]
+    currencies: list[str]
     acquirer_ids: set[str]
     identifiers: set[tuple[str, str]]
 
@@ -430,6 +449,10 @@ class Transaction:
     process_names: set[str] = field(default_factory=set)
     iso_response_codes: list[str] = field(default_factory=list)
     spdh_response_codes: list[str] = field(default_factory=list)
+    tids: list[str] = field(default_factory=list)
+    mids: list[str] = field(default_factory=list)
+    amounts: list[str] = field(default_factory=list)
+    currencies: list[str] = field(default_factory=list)
     acquirer_ids: set[str] = field(default_factory=set)
     identifiers: set[tuple[str, str]] = field(default_factory=set)
 
@@ -446,6 +469,10 @@ class Transaction:
             self.request_mtis.extend(block.mti_values)
         self.rrns.extend(block.rrn_values)
         self.processing_codes.extend(block.processing_codes)
+        self.tids.extend(block.tids)
+        self.mids.extend(block.mids)
+        self.amounts.extend(block.amounts)
+        self.currencies.extend(block.currencies)
         if block.message_type:
             self.message_types.append(block.message_type)
         if block.process_name:
@@ -599,6 +626,20 @@ def unique_nonempty(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
 
+def values_for_names(
+    fields: dict[str, list[str]],
+    audit_values: dict[str, list[str]],
+    plain: dict[str, list[str]],
+    names: tuple[str, ...],
+) -> list[str]:
+    values: list[str] = []
+    for name in names:
+        values.extend(fields.get(name, []))
+        values.extend(audit_values.get(name, []))
+        values.extend(plain.get(name, []))
+    return unique_nonempty(values)
+
+
 def parse_timestamp(text: str) -> datetime | None:
     precise_match = RECORD_TIMESTAMP_RE.search(text)
     if precise_match:
@@ -685,6 +726,30 @@ def parse_block(text: str, index: int) -> BlockMeta:
         + audit_values.get("responsecode", [])
         + plain.get("responsecode", [])
     )
+    tids = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("tid", "terminal", "terminalid", "trmid", "trmuid"),
+    )
+    mids = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("mid", "merchantid", "merchant"),
+    )
+    amounts = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("amt", "amount", "transactionamount"),
+    )
+    currencies = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("currency", "currencycode", "currcode"),
+    )
     acquirer_ids = set(
         unique_nonempty(
             fields.get("acqid", [])
@@ -714,6 +779,14 @@ def parse_block(text: str, index: int) -> BlockMeta:
                 clean_value = value.strip()
                 if clean_value:
                     identifiers.add((canonical_name, clean_value))
+    for canonical_name, values in (
+        ("tid", tids),
+        ("mid", mids),
+        ("amount", amounts),
+        ("currency", currencies),
+    ):
+        for value in values:
+            identifiers.add((canonical_name, value))
 
     flow_values = plain.get("flowdir", [])
     is_request = any("REQUEST" in value.upper() for value in flow_values)
@@ -735,6 +808,10 @@ def parse_block(text: str, index: int) -> BlockMeta:
         rrn_values=rrn_values,
         processing_codes=processing_codes,
         response_codes=response_codes,
+        tids=tids,
+        mids=mids,
+        amounts=amounts,
+        currencies=currencies,
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
     )
@@ -764,6 +841,20 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
                     "transuid",
                     "rrn",
                     "responsecode",
+                    "tid",
+                    "terminal",
+                    "terminalid",
+                    "trmid",
+                    "trmuid",
+                    "mid",
+                    "merchantid",
+                    "merchant",
+                    "amt",
+                    "amount",
+                    "transactionamount",
+                    "currency",
+                    "currencycode",
+                    "currcode",
                 }:
                     plain[name].append(value)
                 if name == "messagetype":
@@ -872,6 +963,30 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         + audit_values.get("responsecode", [])
         + plain.get("responsecode", [])
     )
+    tids = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("tid", "terminal", "terminalid", "trmid", "trmuid"),
+    )
+    mids = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("mid", "merchantid", "merchant"),
+    )
+    amounts = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("amt", "amount", "transactionamount"),
+    )
+    currencies = values_for_names(
+        fields,
+        audit_values,
+        plain,
+        ("currency", "currencycode", "currcode"),
+    )
     acquirer_ids = set(
         unique_nonempty(
             fields.get("acqid", [])
@@ -895,6 +1010,14 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
                 clean_value = value.strip()
                 if clean_value:
                     identifiers.add((canonical_name, clean_value))
+    for canonical_name, values in (
+        ("tid", tids),
+        ("mid", mids),
+        ("amount", amounts),
+        ("currency", currencies),
+    ):
+        for value in values:
+            identifiers.add((canonical_name, value))
 
     flow_values = plain.get("flowdir", [])
     is_request = any("REQUEST" in value.upper() for value in flow_values)
@@ -916,6 +1039,10 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         rrn_values=rrn_values,
         processing_codes=processing_codes,
         response_codes=response_codes,
+        tids=tids,
+        mids=mids,
+        amounts=amounts,
+        currencies=currencies,
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
     )
@@ -942,6 +1069,18 @@ def select_identifier(transaction: Transaction, name: str) -> str:
         if identifier_name == name and value:
             return value
     return ""
+
+
+def select_first(values: list[str]) -> str:
+    return next((value for value in values if value), "")
+
+
+def select_amount_display(transaction: Transaction) -> str:
+    amount = select_first(transaction.amounts)
+    if not amount:
+        return ""
+    currency = select_first(transaction.currencies)
+    return f"{amount}({currency})" if currency else amount
 
 
 def select_response_code(values: list[str]) -> str:
@@ -1342,7 +1481,28 @@ def format_transaction_summary(
         else "Not available"
     )
     rrn = select_rrn(transaction)
-    terminal = tango_field(tango_lines, "trmId") or "Not available"
+    tid = (
+        select_first(transaction.tids)
+        or tango_field(tango_lines, "trmId")
+        or "Not available"
+    )
+    mid = (
+        select_first(transaction.mids)
+        or tango_field(tango_lines, "merchantId")
+        or tango_field(tango_lines, "merId")
+        or "Not available"
+    )
+    amount = select_amount_display(transaction)
+    if not amount:
+        tango_amount = tango_field(tango_lines, "amount")
+        tango_currency = tango_field(tango_lines, "currency")
+        amount = (
+            f"{tango_amount}({tango_currency})"
+            if tango_amount and tango_currency
+            else tango_amount
+        )
+    if not amount:
+        amount = "Not available"
     acquirer = tango_field(tango_lines, "acqId")
     if not acquirer:
         acquirer = sorted(transaction.acquirer_ids)[0] if transaction.acquirer_ids else "Not available"
@@ -1360,7 +1520,7 @@ def format_transaction_summary(
     )
 
     def field_line(label: str, value: str) -> str:
-        return f"{label:<15} : {value}"
+        return f"{label:<20} : {value}"
 
     lines = [
         SECTION_SEPARATOR,
@@ -1374,13 +1534,15 @@ def format_transaction_summary(
         [
             field_line("Date/Time", readable_timestamp),
             "",
-            field_line("Terminal", terminal),
+            field_line("TID", tid),
+            field_line("MID", mid),
+            field_line("AMT", amount),
             field_line("Acquirer", acquirer),
             field_line("MTI", mti),
             "",
-            field_line("Result Code", result_code),
-            field_line("Response Code", spdh_rc),
-            field_line("Network RC", network_rc),
+            field_line("Internal result Code", result_code),
+            field_line("RC_SPDH", spdh_rc),
+            field_line("RC_ISO", network_rc),
             "",
             field_line("Status", transaction_status(iso_rc, spdh_rc)),
             SECTION_SEPARATOR,
@@ -1816,8 +1978,15 @@ def decompress_file(path: Path) -> Path:
     output_path = path.with_suffix("")
     if output_path.is_file():
         return output_path
-    with gzip.open(path, "rb") as source, output_path.open("wb") as destination:
-        shutil.copyfileobj(source, destination)
+    try:
+        with gzip.open(path, "rb") as source, output_path.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
+    except (EOFError, gzip.BadGzipFile) as exc:
+        output_path.unlink(missing_ok=True)
+        raise ValueError(
+            f"Compressed file is incomplete or corrupted: {path.name}. "
+            "Download/copy the .gz file again and retry."
+        ) from exc
     return output_path
 
 

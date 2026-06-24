@@ -68,6 +68,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     rrn_var = tk.StringVar(root)
     authcode_var = tk.StringVar(root)
     transaction_type_var = tk.StringVar(root)
+    tid_var = tk.StringVar(root)
+    mid_var = tk.StringVar(root)
+    amount_var = tk.StringVar(root)
     response_code_spdh_var = tk.StringVar(root)
     response_code_iso_var = tk.StringVar(root)
     include_internal_var = tk.BooleanVar(root, value=True)
@@ -116,6 +119,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         rrn_entry.configure(state=entry_state)
         authcode_entry.configure(state=entry_state)
         transaction_type_entry.configure(state=entry_state)
+        tid_entry.configure(state=entry_state)
+        mid_entry.configure(state=entry_state)
+        amount_entry.configure(state=entry_state)
         response_code_spdh_entry.configure(state=entry_state)
         response_code_iso_entry.configure(state=entry_state)
 
@@ -242,6 +248,15 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         width=25,
     )
     bank_combo.pack(side=tk.LEFT)
+    tk.Label(folder_frame, text="Timezone:").pack(side=tk.LEFT, padx=(14, 8))
+    timezone_combo = ttk.Combobox(
+        folder_frame,
+        textvariable=timezone_var,
+        values=("UTC", "UTC+1", "UTC+2", "UTC+3", "UTC-1", "UTC-2", "UTC-3"),
+        state="readonly",
+        width=7,
+    )
+    timezone_combo.pack(side=tk.LEFT)
 
     def clear_filters() -> None:
         trans_uid_var.set("")
@@ -249,6 +264,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         rrn_var.set("")
         authcode_var.set("")
         transaction_type_var.set("")
+        tid_var.set("")
+        mid_var.set("")
+        amount_var.set("")
         response_code_spdh_var.set("")
         response_code_iso_var.set("")
 
@@ -277,7 +295,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     progress_callback=update_extract_progress,
                 )
                 validate_local_log_folder(folder_path)
-            except (OSError, ValueError, gzip.BadGzipFile) as exc:
+            except (OSError, ValueError) as exc:
                 hide_inline_progress()
                 root.config(cursor="")
                 status_var.set(f"Import failed: {exc}")
@@ -304,13 +322,21 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     menubar.add_cascade(label="File", menu=file_menu)
     menubar.add_cascade(label="Edit", menu=edit_menu)
     menubar.add_cascade(label="Tools", menu=tools_menu)
+
+    def show_about() -> None:
+        messagebox.showinfo(
+            "About LogComparator",
+            (
+                "LogComparator\n"
+                f"Version: {APP_VERSION}\n"
+                f"Author: {APP_AUTHOR}"
+            ),
+            parent=root,
+        )
+
     help_menu.add_command(
         label="About",
-        command=lambda: messagebox.showinfo(
-            "About LogComparator",
-            f"LogComparator\nVersion: {APP_VERSION}\nAuthor: {APP_AUTHOR}",
-            parent=root,
-        ),
+        command=show_about,
     )
     menubar.add_cascade(label="Help", menu=help_menu)
     root.config(menu=menubar)
@@ -448,73 +474,120 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         command=select_ssh_date,
     )
     select_date_button.pack(side=tk.LEFT, padx=(0, 10))
+
+    def max_length_validator(max_length: int):
+        return root.register(lambda value: len(value) <= max_length)
+
+    stan_validate = max_length_validator(6)
+    rrn_validate = max_length_validator(12)
+    authcode_validate = max_length_validator(6)
+    transaction_type_validate = max_length_validator(20)
+    response_code_validate = max_length_validator(6)
+    amount_validate = max_length_validator(8)
+
     fields = tk.Frame(root)
     fields.pack(fill=tk.X, padx=12, pady=(4, 4))
-    tk.Label(fields, text="Timezone:").pack(side=tk.LEFT, padx=(0, 8))
-    timezone_combo = ttk.Combobox(
-        fields,
-        textvariable=timezone_var,
-        values=("UTC", "UTC+1", "UTC+2", "UTC+3", "UTC-1", "UTC-2", "UTC-3"),
-        state="readonly",
-        width=7,
-    )
-    timezone_combo.pack(side=tk.LEFT)
-    tk.Label(fields, text="TransUID:").pack(side=tk.LEFT, padx=(14, 8))
+
+    def filter_group(label: str) -> tk.Frame:
+        frame = tk.Frame(fields)
+        frame.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
+        tk.Label(frame, text=label, anchor="center").pack(fill=tk.X)
+        return frame
+
+    trans_uid_group = filter_group("TransUID")
     trans_uid_entry = tk.Entry(
-        fields,
+        trans_uid_group,
         textvariable=trans_uid_var,
         width=18,
         state="disabled",
     )
-    trans_uid_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="STAN:").pack(side=tk.LEFT, padx=(14, 8))
+    trans_uid_entry.pack(fill=tk.X)
+    stan_group = filter_group("STAN")
     stan_entry = tk.Entry(
-        fields,
+        stan_group,
         textvariable=stan_var,
-        width=18,
+        width=8,
         state="disabled",
+        validate="key",
+        validatecommand=(stan_validate, "%P"),
     )
-    stan_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="RRN:").pack(side=tk.LEFT, padx=(14, 8))
+    stan_entry.pack(fill=tk.X)
+    rrn_group = filter_group("RRN")
     rrn_entry = tk.Entry(
-        fields,
+        rrn_group,
         textvariable=rrn_var,
+        width=14,
+        state="disabled",
+        validate="key",
+        validatecommand=(rrn_validate, "%P"),
+    )
+    rrn_entry.pack(fill=tk.X)
+    authcode_group = filter_group("AuthCode")
+    authcode_entry = tk.Entry(
+        authcode_group,
+        textvariable=authcode_var,
+        width=8,
+        state="disabled",
+        validate="key",
+        validatecommand=(authcode_validate, "%P"),
+    )
+    authcode_entry.pack(fill=tk.X)
+    transaction_type_group = filter_group("TransactionType")
+    transaction_type_entry = tk.Entry(
+        transaction_type_group,
+        textvariable=transaction_type_var,
         width=22,
         state="disabled",
+        validate="key",
+        validatecommand=(transaction_type_validate, "%P"),
     )
-    rrn_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="AuthCode:").pack(side=tk.LEFT, padx=(14, 8))
-    authcode_entry = tk.Entry(
-        fields,
-        textvariable=authcode_var,
+    transaction_type_entry.pack(fill=tk.X)
+    tid_group = filter_group("TID")
+    tid_entry = tk.Entry(
+        tid_group,
+        textvariable=tid_var,
         width=12,
         state="disabled",
     )
-    authcode_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="TransactionType:").pack(side=tk.LEFT, padx=(14, 8))
-    transaction_type_entry = tk.Entry(
-        fields,
-        textvariable=transaction_type_var,
-        width=18,
+    tid_entry.pack(fill=tk.X)
+    mid_group = filter_group("MID")
+    mid_entry = tk.Entry(
+        mid_group,
+        textvariable=mid_var,
+        width=12,
         state="disabled",
     )
-    transaction_type_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="responseCodeSPDH:").pack(side=tk.LEFT, padx=(14, 8))
+    mid_entry.pack(fill=tk.X)
+    amount_group = filter_group("AMT")
+    amount_entry = tk.Entry(
+        amount_group,
+        textvariable=amount_var,
+        width=10,
+        state="disabled",
+        validate="key",
+        validatecommand=(amount_validate, "%P"),
+    )
+    amount_entry.pack(fill=tk.X)
+    response_code_spdh_group = filter_group("RC_SPDH")
     response_code_spdh_entry = tk.Entry(
-        fields,
+        response_code_spdh_group,
         textvariable=response_code_spdh_var,
         width=8,
         state="disabled",
+        validate="key",
+        validatecommand=(response_code_validate, "%P"),
     )
-    response_code_spdh_entry.pack(side=tk.LEFT)
-    tk.Label(fields, text="responseCodeISO:").pack(side=tk.LEFT, padx=(14, 8))
+    response_code_spdh_entry.pack(fill=tk.X)
+    response_code_iso_group = filter_group("RC_ISO")
     response_code_iso_entry = tk.Entry(
-        fields,
+        response_code_iso_group,
         textvariable=response_code_iso_var,
         width=8,
         state="disabled",
+        validate="key",
+        validatecommand=(response_code_validate, "%P"),
     )
-    response_code_iso_entry.pack(side=tk.LEFT)
+    response_code_iso_entry.pack(fill=tk.X)
 
     transaction_columns = (
         "datetime",
@@ -523,6 +596,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "stan",
         "authcode",
         "transactiontype",
+        "tid",
+        "mid",
+        "amt",
         "responsecodespdh",
         "responsecodeiso",
     )
@@ -542,6 +618,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "stan": "STAN",
         "authcode": "AuthCode",
         "transactiontype": "TransactionType",
+        "tid": "TID",
+        "mid": "MID",
+        "amt": "AMT",
         "responsecodespdh": "responseCodeSPDH",
         "responsecodeiso": "responseCodeISO",
     }
@@ -552,6 +631,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "stan": 90,
         "authcode": 100,
         "transactiontype": 170,
+        "tid": 110,
+        "mid": 110,
+        "amt": 110,
         "responsecodespdh": 170,
         "responsecodeiso": 170,
     }
@@ -619,8 +701,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     transaction_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
     transaction_tree.grid(row=0, column=0, sticky="nsew")
     y_scroll.grid(row=0, column=1, sticky="ns")
-    x_scroll.grid(row=1, column=0, sticky="ew")
+    x_scroll.grid(row=1, column=0, columnspan=2, sticky="ew")
     transaction_frame.rowconfigure(0, weight=1)
+    transaction_frame.rowconfigure(1, weight=0)
     transaction_frame.columnconfigure(0, weight=1)
 
     def clear_transaction_list() -> None:
@@ -657,6 +740,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             "stan": stan_var.get().strip(),
             "authcode": authcode_var.get().strip(),
             "transactiontype": transaction_type_var.get().strip(),
+            "tid": tid_var.get().strip(),
+            "mid": mid_var.get().strip(),
+            "amt": amount_var.get().strip(),
             "responsecodespdh": response_code_spdh_var.get().strip(),
             "responsecodeiso": response_code_iso_var.get().strip(),
         }
@@ -761,6 +847,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 select_identifier(transaction, "stan"),
                 select_identifier(transaction, "authcode"),
                 transaction_type,
+                select_first(transaction.tids),
+                select_first(transaction.mids),
+                select_amount_display(transaction),
                 response_code_component(
                     select_response_code(transaction.spdh_response_codes),
                     SPDH_RC_NAMES,
@@ -889,6 +978,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         stan_var,
         authcode_var,
         transaction_type_var,
+        tid_var,
+        mid_var,
+        amount_var,
         response_code_spdh_var,
         response_code_iso_var,
     ):
@@ -1525,8 +1617,8 @@ def execute_gui_export(
         f"STAN: {stan or 'ALL'}\n"
         f"RRN: {rrn or 'ALL'}\n"
         f"AuthCode: {authcode or 'ALL'}\n"
-        f"responseCodeSPDH: {response_code_spdh or 'ALL'}\n"
-        f"responseCodeISO: {response_code_iso or 'ALL'}\n"
+        f"RC_SPDH: {response_code_spdh or 'ALL'}\n"
+        f"RC_ISO: {response_code_iso or 'ALL'}\n"
         f"Protocol: {protocol_choice}\n"
         f"Byte/Data: {'INCLUDED' if include_byte_data else 'EXCLUDED'}\n"
         f"Tango Internal: {'INCLUDED' if include_internal else 'EXCLUDED'}\n"

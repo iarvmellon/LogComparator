@@ -43,7 +43,8 @@ Running `main.py` without local audit arguments starts the GUI:
    Progress is shown in the bottom-right progress bar of the main window while
    files are downloaded and extracted.
 8. Select a bank/acquirer, and optionally enter `TransUID`, `STAN`, `RRN`,
-   `AuthCode`, `responseCodeSPDH`, or `responseCodeISO` filters. The bank list
+   `AuthCode`, `TransactionType`, `TID`, `MID`, `AMT`, `RC_SPDH`, or
+   `RC_ISO` filters. The bank list
    contains only choices matching the available `audit.OPN...` files in the
    selected/extracted folder.
    After a bank/acquirer is selected, the transaction list is populated.
@@ -109,8 +110,9 @@ The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
 The bank controls the OPN audit process and the bank-filtering rules.
 It is disabled until a source is available: import a folder with
 **Tools > Import**, or select an SSH/SCP date first. The `TransUID`,
-`STAN`, `RRN`, `AuthCode`, `responseCodeSPDH`, and `responseCodeISO` filter
-fields are disabled in the same way.
+`STAN`, `RRN`, `AuthCode`, `TransactionType`, `TID`, `MID`, `AMT`,
+`RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
+way.
 
 The bank list is built from the `audit.OPN...` files found in the active source
 folder. For example, a folder containing `audit.OPNBISOBKT01...` enables
@@ -146,8 +148,11 @@ transactions in a table with:
 - STAN
 - AuthCode
 - TransactionType
-- responseCodeSPDH
-- responseCodeISO
+- TID
+- MID
+- AMT
+- RC_SPDH
+- RC_ISO
 
 Click any column header to sort the displayed rows by that column. The table
 supports selecting one or more rows. If rows are selected when `Export` runs,
@@ -184,13 +189,14 @@ source timestamp is treated as UTC; choosing `UTC+1`, `UTC+2`, `UTC+3`,
 `UTC-1`, `UTC-2`, or `UTC-3` shifts the displayed value without changing the
 raw parsed data, filters, or exported logs.
 
-The TransUID, RRN, STAN, AuthCode, TransactionType, responseCodeSPDH, and
-responseCodeISO fields also act as live filters for the transaction table.
+The TransUID, RRN, STAN, AuthCode, TransactionType, TID, MID, AMT,
+RC_SPDH, and RC_ISO fields also act as live filters for the
+transaction table.
 
 ### TransUID
 
-The TransUID, STAN, RRN, AuthCode, TransactionType, responseCodeSPDH, and
-responseCodeISO fields are optional:
+The TransUID, STAN, RRN, AuthCode, TransactionType, TID, MID, AMT,
+RC_SPDH, and RC_ISO fields are optional:
 
 - Empty fields: export every transaction that matches the selected bank.
 - Filled fields: export only transactions matching all filled values.
@@ -356,15 +362,17 @@ transUId        : 36178713733611102100139
 RRN             : 000537001063
 Date/Time       : 2026-06-19 08:25:37.320
 
-Terminal        : PS060063
-Acquirer        : 065
-MTI             : 4530
+TID                  : PS060063
+MID                  : 123456789012345
+AMT                  : 1000(978)
+Acquirer             : 065
+MTI                  : 4530
 
-Result Code     : 2105
-Response Code   : 050
-Network RC      : 05 (Do Not Honor)
+Internal result Code : 2105
+RC_SPDH              : 050
+RC_ISO               : 05 (Do Not Honor)
 
-Status          : DECLINED
+Status               : DECLINED
 ###############################################################################
 ```
 
@@ -648,7 +656,7 @@ Blue highlighting covers:
 Red highlighting overrides blue for:
 
 - Every mapped ISO/SPDH decline response code.
-- Declined `Result Code`, `Response Code`, and `Network RC` summary lines.
+- Declined `Internal result Code`, `RC_SPDH`, and `RC_ISO` summary lines.
 - Full decoded decline lines such as `responseCode : asc<96>`.
 - External ISO lines whose final RC is not `00`.
 - External SPDH lines whose final RC is not `000`.
