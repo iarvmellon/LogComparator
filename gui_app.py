@@ -275,6 +275,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     folder_path,
                     progress_callback=update_extract_progress,
                 )
+                validate_local_log_folder(folder_path)
             except (OSError, ValueError, gzip.BadGzipFile) as exc:
                 hide_inline_progress()
                 root.config(cursor="")

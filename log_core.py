@@ -1935,6 +1935,30 @@ def available_banks_for_folder(folder: Path) -> list[str]:
     return [bank for bank in BANK_AUDIT_CODES if bank in set(banks)]
 
 
+def validate_local_log_folder(folder: Path) -> None:
+    if not folder.is_dir():
+        raise ValueError(f"Local source folder was not found: {folder}")
+    files = [source_file_key(path) for path in folder.iterdir() if path.is_file()]
+    has_tango = any(parse_log_date(name) for name in files)
+    has_ptms = any(name.startswith("audit.PTMS") for name in files)
+    has_opn = any(name.startswith("audit.OPN") for name in files)
+    if has_tango and has_ptms and has_opn:
+        return
+    missing = []
+    if not has_tango:
+        missing.append("tango.log*")
+    if not has_ptms:
+        missing.append("audit.PTMS*")
+    if not has_opn:
+        missing.append("audit.OPN*")
+    raise ValueError(
+        "The selected log folder must contain all required source files: "
+        "tango.log*, audit.PTMS*, and at least one audit.OPN* file, "
+        "compressed (.gz) or uncompressed. "
+        f"Missing: {', '.join(missing)}"
+    )
+
+
 def path_matches_audit(path: Path, selected_date: str, audit_code: str) -> bool:
     name = path.name
     compact_date = selected_date.replace("-", "")
