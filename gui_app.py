@@ -64,7 +64,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
     environment_var = tk.StringVar(root, value=SOURCE_ENVIRONMENTS[0])
     protocol_var = tk.StringVar(root, value=PROTOCOL_CHOICES[0])
-    include_byte_data_var = tk.BooleanVar(root, value=True)
+    include_byte_data_var = tk.BooleanVar(root, value=False)
     folder_var = tk.StringVar(root)
     bank_var = tk.StringVar(root)
     timezone_var = tk.StringVar(root, value="UTC")
@@ -79,7 +79,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     amount_var = tk.StringVar(root)
     response_code_spdh_var = tk.StringVar(root)
     response_code_iso_var = tk.StringVar(root)
-    include_internal_var = tk.BooleanVar(root, value=True)
+    include_internal_var = tk.BooleanVar(root, value=False)
     include_tango_to_network_var = tk.BooleanVar(root, value=True)
     include_network_to_tango_var = tk.BooleanVar(root, value=True)
     selected_date_var = tk.StringVar(root, value="Not selected")
@@ -326,7 +326,12 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             clear_selected_remote_date()
             update_source_state()
             update_bank_state()
-            status_var.set(f"Imported log folder: {folder}")
+            status_var.set("Folder loaded. Please select the bank.")
+            messagebox.showinfo(
+                "Folder loaded",
+                f"Folder loaded. Please select the bank.\n\n{folder}",
+                parent=root,
+            )
 
     def show_settings_dialog() -> None:
         dialog = tk.Toplevel(root)

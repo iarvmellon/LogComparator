@@ -104,6 +104,10 @@ decompressed files are included in transaction analysis. The same applies to
 the `.gzip` extension. If a gzip trailer is incomplete but valid log lines can
 be recovered, the recovered content is retained and included in the analysis.
 
+After a folder is extracted and validated successfully, the GUI displays a
+**Folder loaded** confirmation with the selected path and the instruction
+`Folder loaded. Please select the bank.` in both the dialog and status bar.
+
 For `Log folder`, the main window shows a read-only folder path field. The
 folder must contain one daily log set; if multiple `tango.log...` dates are
 present, the run is rejected so the output date is not ambiguous.
@@ -259,6 +263,8 @@ below the menu control verbose payload sections:
 - `Exclude byte/data`: remove `Raw data (hex):` and `Bus data:` sections from
   exported logs.
 
+`Byte/Data` starts disabled when the GUI opens and can be enabled before export.
+
 When `Exclude byte/data` is selected, `Raw data (hex):` and `Bus data:` are
 removed from the exported `.log`.
 
@@ -268,6 +274,9 @@ written into the exported `.log`:
 - `Tango Internal`: internal TANGO request/response audit blocks.
 - `Tango->Network`: outgoing external audit blocks.
 - `Network->Tango`: incoming external audit blocks.
+
+`Tango Internal` starts disabled when the GUI opens. `Tango->Network` and
+`Network->Tango` start enabled.
 
 ## Source cache
 
