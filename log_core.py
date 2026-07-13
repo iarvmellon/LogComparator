@@ -28,7 +28,8 @@ FIELD_RE = re.compile(
     re.IGNORECASE,
 )
 AUDIT_VALUE_RE = re.compile(
-    r"^\s*(?:\d+\.\s+)?(?P<name>[A-Za-z_][\w-]*)\s*:\s*"
+    r"^\s*(?:(?:\[[^\]]+\]|\d+\.)\s*)?"
+    r"(?P<name>[A-Za-z_][\w-]*)\s*:\s*"
     r"(?:asc|int)<(?P<value>[^>]*)>",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -80,6 +81,8 @@ LIST_FIELD_NAMES = {
     "auditnumber",
     "origauditnumber",
     "transseqno",
+    "sequence_number",
+    "sequencenumber",
     "authcode",
     "authid",
     "approvalcode",
@@ -452,6 +455,7 @@ def parse_block(text: str, index: int) -> BlockMeta:
     identifier_names = {
         "rrn": ("retrievrefnumber", "retrievalreferencenumber", "rrn"),
         "stan": ("stan", "auditnumber", "origauditnumber", "transseqno"),
+        "sequence_number": ("sequence_number", "sequencenumber"),
         "authcode": ("authcode", "authid", "approvalcode", "authorizationcode"),
         "trmuid": ("trmuid",),
         "msguid": ("msguid",),
@@ -606,8 +610,11 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
                 search_from = name_end + 1
         if ":" in line and ("asc<" in line or "int<" in line):
             audit_name, audit_value = line.split(":", 1)
-            if "." in audit_name:
-                audit_name = audit_name.split(".", 1)[1]
+            audit_name = re.sub(
+                r"^\s*(?:\[[^\]]+\]|\d+\.)\s*",
+                "",
+                audit_name,
+            )
             name = audit_name.strip().lower()
             if name in LIST_FIELD_NAMES:
                 value_start = audit_value.find("<")
@@ -689,6 +696,7 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
     identifier_names = {
         "rrn": ("retrievrefnumber", "retrievalreferencenumber", "rrn"),
         "stan": ("stan", "auditnumber", "origauditnumber", "transseqno"),
+        "sequence_number": ("sequence_number", "sequencenumber"),
         "authcode": ("authcode", "authid", "approvalcode", "authorizationcode"),
     }
     for canonical_name, names in identifier_names.items():
@@ -1467,6 +1475,7 @@ def split_audit_files(
     stan: str | None = None,
     rrn: str | None = None,
     authcode: str | None = None,
+    sequence_number: str | None = None,
     response_code_spdh: str | None = None,
     response_code_iso: str | None = None,
     tango_log_path: Path | None = None,
@@ -1517,6 +1526,7 @@ def split_audit_files(
         "stan": (stan or "").strip(),
         "rrn": (rrn or "").strip(),
         "authcode": (authcode or "").strip(),
+        "sequence_number": (sequence_number or "").strip(),
     }
     identifier_filters = {
         name: value for name, value in identifier_filters.items() if value
@@ -1609,12 +1619,12 @@ def run_remote_command(command: str, sudo: bool = False) -> str:
         "StrictHostKeyChecking=accept-new",
         "-p",
         str(SSH_PORT),
-        f"{DEFAULT_USER}@{DEFAULT_HOST}",
+        f"{RUNTIME_SETTINGS.user}@{DEFAULT_HOST}",
         remote_command,
     ]
     completed = subprocess.run(
         args,
-        input=DEFAULT_SUDO_PASSWORD + "\n" if sudo else None,
+        input=RUNTIME_SETTINGS.sudo_password + "\n" if sudo else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1642,7 +1652,7 @@ def download_remote_file(remote_path: str, local_dir: Path) -> Path:
         "StrictHostKeyChecking=accept-new",
         "-P",
         str(SSH_PORT),
-        f"{DEFAULT_USER}@{DEFAULT_HOST}:{remote_path}",
+        f"{RUNTIME_SETTINGS.user}@{DEFAULT_HOST}:{remote_path}",
         str(local_path),
     ]
     completed = subprocess.run(
@@ -1659,20 +1669,30 @@ def download_remote_file(remote_path: str, local_dir: Path) -> Path:
     return local_path
 
 
+COMPRESSED_FILE_SUFFIXES = {".gz", ".gzip"}
+
+
+def is_gzip_file(path: Path) -> bool:
+    return path.suffix.lower() in COMPRESSED_FILE_SUFFIXES
+
+
 def decompress_file(path: Path) -> Path:
-    if path.suffix.lower() != ".gz":
+    if not is_gzip_file(path):
         return path
     output_path = path.with_suffix("")
     if output_path.is_file():
         return output_path
     try:
         with gzip.open(path, "rb") as source, output_path.open("wb") as destination:
-            shutil.copyfileobj(source, destination)
+            for line in source:
+                destination.write(line)
     except (EOFError, gzip.BadGzipFile) as exc:
+        if output_path.is_file() and output_path.stat().st_size > 0:
+            return output_path
         output_path.unlink(missing_ok=True)
         raise ValueError(
             f"Compressed file is incomplete or corrupted: {path.name}. "
-            "Download/copy the .gz file again and retry."
+            "Download/copy the gzip file again and retry."
         ) from exc
     return output_path
 
@@ -1686,7 +1706,7 @@ def extract_gzip_files_in_folder(
     gzip_paths = sorted(
         path
         for path in folder.iterdir()
-        if path.is_file() and path.suffix.lower() == ".gz"
+        if path.is_file() and is_gzip_file(path)
     )
     extracted: list[Path] = []
     total = len(gzip_paths)
@@ -1715,7 +1735,7 @@ def any_path_name(path: str | Path) -> str:
 
 
 def source_file_key(path: Path) -> str:
-    return path.with_suffix("").name if path.suffix.lower() == ".gz" else path.name
+    return path.with_suffix("").name if is_gzip_file(path) else path.name
 
 
 def unique_source_files(paths: list[Path]) -> list[Path]:
@@ -1723,7 +1743,7 @@ def unique_source_files(paths: list[Path]) -> list[Path]:
     for path in sorted(paths, key=lambda item: item.name):
         key = source_file_key(path)
         current = selected.get(key)
-        if current is None or current.suffix.lower() == ".gz":
+        if current is None or is_gzip_file(current):
             selected[key] = path
     return sorted(selected.values(), key=lambda item: item.name)
 
@@ -1746,13 +1766,17 @@ def bank_audit_code_matches(bank: str, audit_code: str) -> bool:
 def parse_log_date(name: str) -> str | None:
     if name == "tango.log":
         return datetime.now().strftime("%Y-%m-%d")
-    if name.startswith("tango.log."):
-        date_part = name[len("tango.log.") :].split(".")[0]
+    match = re.match(
+        r"^tango\.log\.(?P<date>\d{4}-\d{2}-\d{2})(?:$|[ ._-])",
+        name,
+    )
+    if match:
+        date_part = match.group("date")
         try:
             datetime.strptime(date_part, "%Y-%m-%d")
             return date_part
         except ValueError:
-            return None
+            pass
     return None
 
 
@@ -1795,23 +1819,40 @@ def validate_local_log_folder(folder: Path) -> None:
     if not folder.is_dir():
         raise ValueError(f"Local source folder was not found: {folder}")
     files = [source_file_key(path) for path in folder.iterdir() if path.is_file()]
-    has_tango = any(parse_log_date(name) for name in files)
-    has_ptms = any(name.startswith("audit.PTMS") for name in files)
-    has_opn = any(name.startswith("audit.OPN") for name in files)
+    log_dates = sorted({date for name in files if (date := parse_log_date(name))})
+    selected_date = log_dates[0] if len(log_dates) == 1 else None
+    has_tango = bool(log_dates)
+    if selected_date:
+        compact_date = selected_date.replace("-", "")
+        has_ptms = any(
+            name.startswith("audit.PTMS")
+            and (selected_date in name or compact_date in name)
+            for name in files
+        )
+        has_opn = any(
+            name.startswith("audit.OPN")
+            and (selected_date in name or compact_date in name)
+            for name in files
+        )
+    else:
+        has_ptms = any(name.startswith("audit.PTMS") for name in files)
+        has_opn = any(name.startswith("audit.OPN") for name in files)
     if has_tango and has_ptms and has_opn:
         return
-    missing = []
+
+    date_pattern = selected_date or "<YYYY-MM-DD>"
+    missing: list[str] = []
     if not has_tango:
-        missing.append("tango.log*")
+        missing.append("Daily Tango log: tango.log.<YYYY-MM-DD>")
     if not has_ptms:
-        missing.append("audit.PTMS*")
+        missing.append(f"PTMS audit: audit.PTMS*.*{date_pattern}*")
     if not has_opn:
-        missing.append("audit.OPN*")
+        missing.append(f"OPN audit: audit.OPN*.*{date_pattern}* (at least one)")
+    date_context = f" for {selected_date}" if selected_date else ""
     raise ValueError(
-        "The selected log folder must contain all required source files: "
-        "tango.log*, audit.PTMS*, and at least one audit.OPN* file, "
-        "compressed (.gz) or uncompressed. "
-        f"Missing: {', '.join(missing)}"
+        f"Missing required source file(s){date_context}:\n"
+        + "\n".join(f"- {item}" for item in missing)
+        + "\nAccepted formats: uncompressed, .gz, or .gzip."
     )
 
 
@@ -1824,6 +1865,14 @@ def path_matches_audit(path: Path, selected_date: str, audit_code: str) -> bool:
     )
 
 
+def path_matches_ptms_audit(path: Path, selected_date: str) -> bool:
+    name = source_file_key(path)
+    compact_date = selected_date.replace("-", "")
+    return name.startswith("audit.PTMS") and (
+        selected_date in name or compact_date in name
+    )
+
+
 def list_local_audits(folder: Path, selected_date: str, bank: str) -> list[Path]:
     compact_date = selected_date.replace("-", "")
     paths = [
@@ -1831,7 +1880,7 @@ def list_local_audits(folder: Path, selected_date: str, bank: str) -> list[Path]
         for path in folder.iterdir()
         if path.is_file()
         and (
-            path_matches_audit(path, selected_date, "PTMSPMLN01")
+            path_matches_ptms_audit(path, selected_date)
             or (
                 (selected_date in path.name or compact_date in path.name)
                 and path.name.startswith("audit.")

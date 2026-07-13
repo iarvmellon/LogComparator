@@ -37,6 +37,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     str,
     str,
     str,
+    str,
     list[str],
     bool,
     bool,
@@ -71,6 +72,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     stan_var = tk.StringVar(root)
     rrn_var = tk.StringVar(root)
     authcode_var = tk.StringVar(root)
+    sequence_number_var = tk.StringVar(root)
     transaction_type_var = tk.StringVar(root)
     tid_var = tk.StringVar(root)
     mid_var = tk.StringVar(root)
@@ -95,6 +97,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         dict[str, Transaction],
     ] = {}
     transaction_load_token = {"value": 0}
+    current_base_output = {"path": Path(base_output)}
+    RUNTIME_SETTINGS.output = Path(base_output)
+    RUNTIME_SETTINGS.user = DEFAULT_USER
+    RUNTIME_SETTINGS.sudo_password = DEFAULT_SUDO_PASSWORD
 
     menubar = tk.Menu(root)
     file_menu = tk.Menu(menubar, tearoff=0)
@@ -123,6 +129,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         stan_entry.configure(state=entry_state)
         rrn_entry.configure(state=entry_state)
         authcode_entry.configure(state=entry_state)
+        sequence_number_entry.configure(state=entry_state)
         transaction_type_entry.configure(state=entry_state)
         tid_entry.configure(state=entry_state)
         mid_entry.configure(state=entry_state)
@@ -268,6 +275,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         stan_var.set("")
         rrn_var.set("")
         authcode_var.set("")
+        sequence_number_var.set("")
         transaction_type_var.set("")
         tid_var.set("")
         mid_var.set("")
@@ -319,6 +327,107 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             update_source_state()
             update_bank_state()
             status_var.set(f"Imported log folder: {folder}")
+
+    def show_settings_dialog() -> None:
+        dialog = tk.Toplevel(root)
+        dialog.title("Settings")
+        dialog.geometry("620x210")
+        dialog.minsize(560, 190)
+        dialog.transient(root)
+        dialog.grab_set()
+
+        output_var = tk.StringVar(dialog, value=str(current_base_output["path"]))
+        user_var = tk.StringVar(dialog, value=RUNTIME_SETTINGS.user)
+        sudo_password_var = tk.StringVar(dialog, value=RUNTIME_SETTINGS.sudo_password)
+
+        content = tk.Frame(dialog)
+        content.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+        content.columnconfigure(1, weight=1)
+
+        tk.Label(content, text="Output folder:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(0, 8),
+        )
+        output_entry = tk.Entry(content, textvariable=output_var)
+        output_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        def browse_output_folder() -> None:
+            folder = filedialog.askdirectory(
+                title="Select output folder",
+                initialdir=output_var.get().strip() or str(DEFAULT_OUTPUT),
+                parent=dialog,
+            )
+            if folder:
+                output_var.set(folder)
+
+        tk.Button(content, text="Browse", command=browse_output_folder).grid(
+            row=0,
+            column=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(0, 8),
+        )
+        tk.Label(content, text="SSH user:").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(0, 8),
+        )
+        tk.Entry(content, textvariable=user_var).grid(
+            row=1,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 8),
+        )
+        tk.Label(content, text="Sudo password:").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(0, 8),
+        )
+        tk.Entry(content, textvariable=sudo_password_var, show="*").grid(
+            row=2,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 8),
+        )
+
+        button_frame = tk.Frame(content)
+        button_frame.grid(row=3, column=0, columnspan=3, sticky="e", pady=(8, 0))
+
+        def save_settings() -> None:
+            output_text = output_var.get().strip()
+            user_text = user_var.get().strip()
+            if not output_text:
+                messagebox.showerror("Settings", "Output folder is required.", parent=dialog)
+                return
+            if not user_text:
+                messagebox.showerror("Settings", "SSH user is required.", parent=dialog)
+                return
+            output_path = Path(output_text)
+            current_base_output["path"] = output_path
+            RUNTIME_SETTINGS.output = output_path
+            RUNTIME_SETTINGS.user = user_text
+            RUNTIME_SETTINGS.sudo_password = sudo_password_var.get()
+            status_var.set(f"Settings updated. Output folder: {output_path}")
+            dialog.destroy()
+
+        tk.Button(button_frame, text="Save", command=save_settings, width=10).pack(
+            side=tk.LEFT,
+            padx=(0, 8),
+        )
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=10).pack(
+            side=tk.LEFT,
+        )
+        output_entry.focus_set()
+        root.wait_window(dialog)
 
     file_menu.add_command(label=SOURCE_SSH_UAT, command=select_ssh_source)
     file_menu.add_cascade(label="Export options", menu=generated_menu)
@@ -487,6 +596,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     stan_validate = max_length_validator(6)
     rrn_validate = max_length_validator(12)
     authcode_validate = max_length_validator(6)
+    sequence_number_validate = max_length_validator(32)
     transaction_type_validate = max_length_validator(20)
     response_code_validate = max_length_validator(6)
     amount_validate = max_length_validator(8)
@@ -538,6 +648,16 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         validatecommand=(authcode_validate, "%P"),
     )
     authcode_entry.pack(fill=tk.X)
+    sequence_number_group = filter_group("Sequence_Number")
+    sequence_number_entry = tk.Entry(
+        sequence_number_group,
+        textvariable=sequence_number_var,
+        width=16,
+        state="disabled",
+        validate="key",
+        validatecommand=(sequence_number_validate, "%P"),
+    )
+    sequence_number_entry.pack(fill=tk.X)
     transaction_type_group = filter_group("TransactionType")
     transaction_type_entry = tk.Entry(
         transaction_type_group,
@@ -600,6 +720,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn",
         "stan",
         "authcode",
+        "sequencenumber",
         "transactiontype",
         "tid",
         "mid",
@@ -612,6 +733,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn": rrn_group,
         "stan": stan_group,
         "authcode": authcode_group,
+        "sequencenumber": sequence_number_group,
         "transactiontype": transaction_type_group,
         "tid": tid_group,
         "mid": mid_group,
@@ -624,6 +746,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn": rrn_var,
         "stan": stan_var,
         "authcode": authcode_var,
+        "sequencenumber": sequence_number_var,
         "transactiontype": transaction_type_var,
         "tid": tid_var,
         "mid": mid_var,
@@ -641,6 +764,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn",
         "stan",
         "authcode",
+        "sequencenumber",
         "transactiontype",
         "tid",
         "mid",
@@ -663,6 +787,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn": "RRN",
         "stan": "STAN",
         "authcode": "AuthCode",
+        "sequencenumber": "Sequence_Number",
         "transactiontype": "TransactionType",
         "tid": "TID",
         "mid": "MID",
@@ -676,6 +801,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "rrn": 130,
         "stan": 90,
         "authcode": 100,
+        "sequencenumber": 140,
         "transactiontype": 170,
         "tid": 110,
         "mid": 110,
@@ -810,6 +936,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             "rrn": rrn_var.get().strip(),
             "stan": stan_var.get().strip(),
             "authcode": authcode_var.get().strip(),
+            "sequencenumber": sequence_number_var.get().strip(),
             "transactiontype": transaction_type_var.get().strip(),
             "tid": tid_var.get().strip(),
             "mid": mid_var.get().strip(),
@@ -943,6 +1070,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 "" if rrn_value == "NO_RRN" else rrn_value,
                 select_identifier(transaction, "stan"),
                 select_identifier(transaction, "authcode"),
+                select_identifier(transaction, "sequence_number"),
                 transaction_type,
                 select_first(transaction.tids),
                 select_first(transaction.mids),
@@ -1074,6 +1202,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         rrn_var,
         stan_var,
         authcode_var,
+        sequence_number_var,
         transaction_type_var,
         tid_var,
         mid_var,
@@ -1170,6 +1299,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         str,
         str,
         str,
+        str,
         list[str],
         bool,
         bool,
@@ -1187,6 +1317,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             selection["stan"],
             selection["rrn"],
             selection["authcode"],
+            selection["sequence_number"],
             selection["response_code_spdh"],
             selection["response_code_iso"],
             selection["protocol"],
@@ -1232,6 +1363,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         selection["stan"] = stan_var.get().strip()
         selection["rrn"] = rrn_var.get().strip()
         selection["authcode"] = authcode_var.get().strip()
+        selection["sequence_number"] = sequence_number_var.get().strip()
         selection["response_code_spdh"] = response_code_spdh_var.get().strip()
         selection["response_code_iso"] = response_code_iso_var.get().strip()
         selection["protocol"] = protocol_var.get().strip()

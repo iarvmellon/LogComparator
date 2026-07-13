@@ -33,8 +33,8 @@ def list_remote_uat_sources(selected_date: str) -> list[str]:
     log_paths = list_remote_logs_for_date(selected_date)
     command = (
         f"find {REMOTE_AUDIT_DIR} -maxdepth 1 -type f \\( "
-        f"-name 'audit.PTMSPMLN01.*{selected_date}*' -o "
-        f"-name 'audit.PTMSPMLN01.*{compact_date}*' -o "
+        f"-name 'audit.PTMS*.*{selected_date}*' -o "
+        f"-name 'audit.PTMS*.*{compact_date}*' -o "
         f"-name 'audit.OPN*.*{selected_date}*' -o "
         f"-name 'audit.OPN*.*{compact_date}*' \\) -print | sort"
     )
@@ -75,13 +75,13 @@ def download_uat_sources(
         current_step += 1
         report(f"Extracting complete: {path.name}")
     has_tango = any(path.name.startswith("tango.log") for path in extracted)
-    has_ptms = any(path.name.startswith("audit.PTMSPMLN01.") for path in extracted)
+    has_ptms = any(path.name.startswith("audit.PTMS") for path in extracted)
     has_opn = any(path.name.startswith("audit.OPN") for path in extracted)
     missing = []
     if not has_tango:
         missing.append("tango.log*")
     if not has_ptms:
-        missing.append("audit.PTMSPMLN01")
+        missing.append("audit.PTMS*")
     if not has_opn:
         missing.append("audit.OPN*")
     if missing:
@@ -101,8 +101,8 @@ def list_remote_audits(selected_date: str, bank: str) -> list[str]:
     ]
     command = (
         f"find {REMOTE_AUDIT_DIR} -maxdepth 1 -type f \\( "
-        f"-name 'audit.PTMSPMLN01.*{selected_date}*' -o "
-        f"-name 'audit.PTMSPMLN01.*{compact_date}*' -o "
+        f"-name 'audit.PTMS*.*{selected_date}*' -o "
+        f"-name 'audit.PTMS*.*{compact_date}*' -o "
         f"{' -o '.join(audit_patterns)} \\) -print | sort"
     )
     output = run_remote_command(command, sudo=True)
@@ -194,6 +194,7 @@ def execute_gui_export(
         str,
         str,
         str,
+        str,
         list[str],
         bool,
         bool,
@@ -212,6 +213,7 @@ def execute_gui_export(
         stan,
         rrn,
         authcode,
+        sequence_number,
         response_code_spdh,
         response_code_iso,
         protocol_choice,
@@ -234,7 +236,7 @@ def execute_gui_export(
             raise ValueError(f"No tango.log files found in {source_folder}.")
         local_tango_log = Path(local_logs[0])
         source_audits = list_local_audits(source_folder, selected_date, bank)
-        has_ptms = any(path.name.startswith("audit.PTMSPMLN01.") for path in source_audits)
+        has_ptms = any(path.name.startswith("audit.PTMS") for path in source_audits)
         has_opn = any(
             path.name.startswith("audit.")
             and len(path.name.split(".")) >= 3
@@ -244,7 +246,7 @@ def execute_gui_export(
         if not has_ptms or not has_opn:
             missing = []
             if not has_ptms:
-                missing.append("audit.PTMSPMLN01")
+                missing.append("audit.PTMS*")
             if not has_opn:
                 missing.append(f"audit.{BANK_AUDIT_CODES[bank][:-2]}##")
             raise ValueError(
@@ -260,7 +262,7 @@ def execute_gui_export(
             cache_local_file(Path(source_log), source_dir)
         )
         source_audits = list_local_audits(production_folder, selected_date, bank)
-        has_ptms = any(path.name.startswith("audit.PTMSPMLN01.") for path in source_audits)
+        has_ptms = any(path.name.startswith("audit.PTMS") for path in source_audits)
         has_opn = any(
             path.name.startswith("audit.")
             and len(path.name.split(".")) >= 3
@@ -270,7 +272,7 @@ def execute_gui_export(
         if not has_ptms or not has_opn:
             missing = []
             if not has_ptms:
-                missing.append("audit.PTMSPMLN01")
+                missing.append("audit.PTMS*")
             if not has_opn:
                 missing.append(f"audit.{BANK_AUDIT_CODES[bank][:-2]}##")
             raise ValueError(
@@ -289,6 +291,7 @@ def execute_gui_export(
         stan=stan,
         rrn=rrn,
         authcode=authcode,
+        sequence_number=sequence_number,
         response_code_spdh=response_code_spdh,
         response_code_iso=response_code_iso,
         tango_log_path=local_tango_log,
@@ -304,6 +307,7 @@ def execute_gui_export(
             stan,
             rrn,
             authcode,
+            sequence_number,
             response_code_spdh,
             response_code_iso,
             *selected_trans_uids,
@@ -322,6 +326,7 @@ def execute_gui_export(
         f"STAN: {stan or 'ALL'}\n"
         f"RRN: {rrn or 'ALL'}\n"
         f"AuthCode: {authcode or 'ALL'}\n"
+        f"Sequence_Number: {sequence_number or 'ALL'}\n"
         f"RC_SPDH: {response_code_spdh or 'ALL'}\n"
         f"RC_ISO: {response_code_iso or 'ALL'}\n"
         f"Protocol: {protocol_choice}\n"

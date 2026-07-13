@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from version import VERSION
@@ -21,6 +22,16 @@ SSH_PORT = 22
 SSH_TIMEOUT = 10
 SEPARATOR_PREFIX = "=" * 40
 CORRELATION_WINDOW_SECONDS = 5 * 60
+
+
+@dataclass
+class RuntimeSettings:
+    output: Path = DEFAULT_OUTPUT
+    user: str = DEFAULT_USER
+    sudo_password: str = DEFAULT_SUDO_PASSWORD
+
+
+RUNTIME_SETTINGS = RuntimeSettings()
 
 BANK_AUDIT_CODES = {
     "CASYS/STOPANSKA": "OPNBISOCAS01",

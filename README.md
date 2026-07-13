@@ -43,8 +43,8 @@ Running `main.py` without local audit arguments starts the GUI:
    Progress is shown in the bottom-right progress bar of the main window while
    files are downloaded and extracted.
 8. Select a bank/acquirer, and optionally enter `TransUID`, `STAN`, `RRN`,
-   `AuthCode`, `TransactionType`, `TID`, `MID`, `AMT`, `RC_SPDH`, or
-   `RC_ISO` filters. The bank list
+   `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`, `AMT`,
+   `RC_SPDH`, or `RC_ISO` filters. The bank list
    contains only choices matching the available `audit.OPN...` files in the
    selected/extracted folder.
    After a bank/acquirer is selected, the transaction list is populated.
@@ -82,21 +82,36 @@ The source is selected as follows:
 
 - `Log folder`: use **Tools > Import** to select a local folder with the source files. The
   folder should contain one daily `tango.log...` file, one
-  `audit.PTMSPMLN01...` file, and one selected-bank `audit.OPN...` file for the
-  target date. Files may be plain text or `.gz`; `.gz` files are extracted
-  immediately during import before transactions are scanned.
+  `audit.PTMS...` file, and one selected-bank `audit.OPN...` file for the
+  target date. Files may be plain text, `.gz`, or `.gzip`; compressed files are
+  extracted immediately during import before transactions are scanned.
 - `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
   all UAT source files for that day into `LogComparator\<YYYY-MM-DD>_UAT`.
 
-Log folder `.gz` files are extracted in place first. The scanner then reads the
-plain decompressed files, not the compressed files. During export, source files
-are copied into the exported output `source` directory before analysis. If both
-plain and `.gz` versions of the same source file are present, the plain file is
-preferred to avoid duplicate audit blocks.
+Log folder `.gz` and `.gzip` files are extracted in place first. The scanner
+then reads the plain decompressed files, not the compressed files. During
+export, source files are copied into the exported output `source` directory
+before analysis. If both plain and compressed versions of the same source file
+are present, the plain file is preferred to avoid duplicate audit blocks.
+Numbered Tango filenames created during copying, such as
+`tango.log.2026-07-08 1.gz`, are recognized as logs for `2026-07-08`; `.1`,
+`_1`, and `-1` suffix variants are also accepted.
+
+Numbered compressed PTMS parts are kept as separate inputs. For example,
+`audit.PTMSMLN01.2026-07-08.gz` and
+`audit.PTMSMLN01.2026-07-08.1.gz` are extracted separately and both
+decompressed files are included in transaction analysis. The same applies to
+the `.gzip` extension. If a gzip trailer is incomplete but valid log lines can
+be recovered, the recovered content is retained and included in the analysis.
 
 For `Log folder`, the main window shows a read-only folder path field. The
 folder must contain one daily log set; if multiple `tango.log...` dates are
 present, the run is rejected so the output date is not ambiguous.
+
+If import validation fails, the **Import failed** dialog lists only the missing
+source files. When a Tango log date is available, the expected PTMS and OPN
+patterns include that exact date, for example `audit.PTMS*.*2026-07-13*`. The
+validation also rejects an audit file that exists only for a different date.
 
 For `SSH/SCP (UAT)`, the calendar opens automatically in a separate window when
 the mode is selected. After choosing a highlighted date, all matching UAT source
@@ -110,7 +125,7 @@ The calendar is used only for `SSH/SCP (UAT)` and opens in a separate window.
 Only highlighted dates can be selected. Selecting a date downloads:
 
 - `tango.log*`
-- `audit.PTMSPMLN01...`
+- `audit.PTMS...`
 - all `audit.OPN...` files
 
 The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
@@ -120,8 +135,8 @@ The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
 The bank controls the OPN audit process and the bank-filtering rules.
 It is disabled until a source is available: import a folder with
 **Tools > Import**, or select an SSH/SCP date first. The `TransUID`,
-`STAN`, `RRN`, `AuthCode`, `TransactionType`, `TID`, `MID`, `AMT`,
-`RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
+`STAN`, `RRN`, `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`,
+`AMT`, `RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
 way.
 
 The bank list is built from the `audit.OPN...` files found in the active source
@@ -157,6 +172,7 @@ transactions in a table with:
 - RRN
 - STAN
 - AuthCode
+- Sequence_Number
 - TransactionType
 - TID
 - MID
@@ -199,14 +215,15 @@ source timestamp is treated as UTC; choosing `UTC+1`, `UTC+2`, `UTC+3`,
 `UTC-1`, `UTC-2`, or `UTC-3` shifts the displayed value without changing the
 raw parsed data, filters, or exported logs.
 
-The TransUID, RRN, STAN, AuthCode, TransactionType, TID, MID, AMT,
-RC_SPDH, and RC_ISO fields also act as live filters for the
-transaction table.
+The TransUID, RRN, STAN, AuthCode, Sequence_Number, TransactionType, TID, MID,
+AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
+table. `Sequence_Number` is read from audit values such as
+`[0x1C68] Sequence_Number : asc<0010090800>`.
 
 ### TransUID
 
-The TransUID, STAN, RRN, AuthCode, TransactionType, TID, MID, AMT,
-RC_SPDH, and RC_ISO fields are optional:
+The TransUID, STAN, RRN, AuthCode, Sequence_Number, TransactionType, TID, MID,
+AMT, RC_SPDH, and RC_ISO fields are optional:
 
 - Empty fields: export every transaction that matches the selected bank.
 - Filled fields: export only transactions matching all filled values.
@@ -282,8 +299,8 @@ skipped:
 Using existing file: ...
 ```
 
-If a `.gz` file already has a decompressed sibling, decompression is also
-skipped:
+If a `.gz` or `.gzip` file already has a decompressed sibling, decompression is
+also skipped:
 
 ```text
 Using existing decompressed file: ...
@@ -552,6 +569,12 @@ Filter by STAN, RRN, or AuthCode in local mode:
 
 ```powershell
 .\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --stan 123456 --rrn 000358000879 --authcode A1B2C3 -o C:\path\to\output
+```
+
+Filter by Sequence_Number in local mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --sequence-number 0010090800 -o C:\path\to\output
 ```
 
 Without positional audit files, `main.py` opens the GUI.

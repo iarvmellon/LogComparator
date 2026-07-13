@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rrn", help="Export only transactions matching this RRN.")
     parser.add_argument("--authcode", help="Export only transactions matching this AuthCode.")
     parser.add_argument(
+        "--sequence-number",
+        help="Export only transactions matching this Sequence_Number.",
+    )
+    parser.add_argument(
         "--response-code-spdh",
         help="Export only transactions matching this SPDH response code.",
     )
@@ -89,6 +93,7 @@ def main() -> int:
         stan=args.stan,
         rrn=args.rrn,
         authcode=args.authcode,
+        sequence_number=args.sequence_number,
         response_code_spdh=args.response_code_spdh,
         response_code_iso=args.response_code_iso,
         include_byte_data=not args.exclude_byte_data,
@@ -102,6 +107,7 @@ def main() -> int:
     print(f"STAN: {args.stan or 'ALL'}")
     print(f"RRN: {args.rrn or 'ALL'}")
     print(f"AuthCode: {args.authcode or 'ALL'}")
+    print(f"Sequence_Number: {args.sequence_number or 'ALL'}")
     print(f"responseCodeSPDH: {args.response_code_spdh or 'ALL'}")
     print(f"responseCodeISO: {args.response_code_iso or 'ALL'}")
     print(f"Byte/Data: {'EXCLUDED' if args.exclude_byte_data else 'INCLUDED'}")
