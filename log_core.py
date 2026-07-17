@@ -63,6 +63,10 @@ AUDIT_BLOCK_TEXT_CACHE: dict[
     tuple[tuple[str, int, int], ...],
     dict[str, list[tuple[int, str]]],
 ] = {}
+AUDIT_BLOCK_LOCATION_CACHE: dict[
+    tuple[tuple[str, int, int], ...],
+    dict[str, list[tuple[int, str, int, int]]],
+] = {}
 LIST_FIELD_NAMES = {
     "transuid",
     "originmti",
@@ -961,6 +965,14 @@ def iter_marker_blocks_from_text(
 
 def iter_marker_blocks_from_file(path: Path) -> Iterator[str]:
     """Yield only transaction blocks without loading a multi-GB file into RAM."""
+    for _, _, block_text in iter_marker_block_locations_from_file(path):
+        yield block_text
+
+
+def iter_marker_block_locations_from_file(
+    path: Path,
+) -> Iterator[tuple[int, int, str]]:
+    """Yield byte ranges and text for transaction blocks in a large audit."""
     separator = SEPARATOR_PREFIX.encode("ascii")
     markers = (b"transUId", b"transUid")
     with path.open("rb") as handle:
@@ -973,10 +985,42 @@ def iter_marker_blocks_from_file(path: Path) -> Iterator[str]:
                 next_separator = mapped.find(separator, start + len(separator))
                 end = size if next_separator == -1 else next_separator
                 if any(mapped.find(marker, start, end) != -1 for marker in markers):
-                    yield mapped[start:end].decode("utf-8", errors="replace")
+                    yield start, end, mapped[start:end].decode(
+                        "utf-8", errors="replace"
+                    )
                 if next_separator == -1:
                     break
                 start = next_separator
+
+
+def iter_target_blocks_from_file(
+    path: Path,
+    target_uids: set[str],
+) -> Iterator[str]:
+    """Find selected transactions without reading a multi-GB audit into RAM."""
+    separator = SEPARATOR_PREFIX.encode("ascii")
+    uid_bytes = [uid.encode("utf-8") for uid in target_uids if uid]
+    if not uid_bytes or path.stat().st_size == 0:
+        return
+    with path.open("rb") as handle:
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+            ranges: set[tuple[int, int]] = set()
+            for uid in uid_bytes:
+                position = 0
+                while True:
+                    match = mapped.find(uid, position)
+                    if match == -1:
+                        break
+                    start = mapped.rfind(separator, 0, match)
+                    if start == -1:
+                        start = 0
+                    end = mapped.find(separator, match + len(uid))
+                    if end == -1:
+                        end = len(mapped)
+                    ranges.add((start, end))
+                    position = match + len(uid)
+            for start, end in sorted(ranges):
+                yield mapped[start:end].decode("utf-8", errors="replace")
 
 
 def file_text_cache_key(path: Path) -> tuple[str, int, int]:
@@ -1012,7 +1056,22 @@ def cached_target_blocks(
 ) -> list[tuple[int, str]] | None:
     if not target_uids:
         return None
-    blocks_by_uid = AUDIT_BLOCK_TEXT_CACHE.get(input_paths_cache_key(input_paths))
+    cache_key = input_paths_cache_key(input_paths)
+    locations_by_uid = AUDIT_BLOCK_LOCATION_CACHE.get(cache_key)
+    if locations_by_uid is not None:
+        located_blocks: list[tuple[int, str]] = []
+        for uid in target_uids:
+            for index, path_text, start, end in locations_by_uid.get(uid, []):
+                with Path(path_text).open("rb") as handle:
+                    handle.seek(start)
+                    block_text = handle.read(end - start).decode(
+                        "utf-8", errors="replace"
+                    )
+                located_blocks.append((index, block_text))
+        located_blocks.sort(key=lambda item: item[0])
+        return located_blocks
+
+    blocks_by_uid = AUDIT_BLOCK_TEXT_CACHE.get(cache_key)
     if blocks_by_uid is None:
         return None
     blocks: list[tuple[int, str]] = []
@@ -1047,6 +1106,13 @@ def iter_input_blocks(
             )
 
     for input_path in input_paths:
+        if target_uids:
+            for block_text in iter_target_blocks_from_file(input_path, target_uids):
+                yield index, block_text
+                index += 1
+            processed_bytes += input_path.stat().st_size
+            report(input_path, force=True)
+            continue
         if load_into_memory:
             text = read_text_cached(input_path)
             processed_bytes += input_path.stat().st_size
@@ -1105,6 +1171,9 @@ def scan_transactions(
     missing_blocks: list[BlockMeta] = []
 
     cached_blocks = cached_target_blocks(input_paths, target_uids)
+    target_blocks_by_uid: dict[str, list[tuple[int, str]]] | None = (
+        defaultdict(list) if target_uids and cached_blocks is None else None
+    )
     block_iterable = (
         cached_blocks
         if cached_blocks is not None
@@ -1124,6 +1193,8 @@ def scan_transactions(
             continue
         block = parse_block(text, index)
         if block.trans_uid:
+            if target_blocks_by_uid is not None:
+                target_blocks_by_uid[block.trans_uid].append((index, text))
             transaction = transactions.setdefault(
                 block.trans_uid,
                 Transaction(trans_uid=block.trans_uid, first_index=index),
@@ -1131,6 +1202,11 @@ def scan_transactions(
             transaction.add(block)
         elif correlate_missing:
             missing_blocks.append(block)
+
+    if target_blocks_by_uid is not None:
+        AUDIT_BLOCK_TEXT_CACHE[input_paths_cache_key(input_paths)] = dict(
+            target_blocks_by_uid
+        )
 
     if not correlate_missing:
         return transactions, {}
@@ -1154,16 +1230,20 @@ def scan_transactions_for_list(
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Transaction]:
     transactions: dict[str, Transaction] = {}
+    locations_by_uid: dict[str, list[tuple[int, str, int, int]]] = defaultdict(list)
     index = 0
     total_bytes = sum(path.stat().st_size for path in input_paths)
     processed_bytes = 0
     for input_path in input_paths:
         file_size = input_path.stat().st_size
-        for block_text in iter_marker_blocks_from_file(input_path):
+        for start, end, block_text in iter_marker_block_locations_from_file(input_path):
             block = parse_block_for_list(block_text, index)
             if not block.trans_uid:
                 index += 1
                 continue
+            locations_by_uid[block.trans_uid].append(
+                (index, str(input_path), start, end)
+            )
             transaction = transactions.setdefault(
                 block.trans_uid,
                 Transaction(trans_uid=block.trans_uid, first_index=index),
@@ -1177,6 +1257,9 @@ def scan_transactions_for_list(
                 total_bytes,
                 f"Load transactions: {input_path.name}",
             )
+    AUDIT_BLOCK_LOCATION_CACHE[input_paths_cache_key(input_paths)] = dict(
+        locations_by_uid
+    )
     return transactions
 
 
@@ -1188,13 +1271,14 @@ def collect_tango_lines(
     if not tango_log_path or not tango_log_path.is_file() or not transaction_uids:
         return lines_by_uid
 
-    uid_pattern = build_uid_pattern(transaction_uids)
-    if uid_pattern is None:
-        return lines_by_uid
-    for line in read_text_cached(tango_log_path).splitlines(keepends=True):
-        matched_uids = {match.group(0) for match in uid_pattern.finditer(line)}
-        for uid in matched_uids:
-            lines_by_uid[uid].append(line)
+    uid_bytes = {uid: uid.encode("utf-8") for uid in transaction_uids if uid}
+    with tango_log_path.open("rb") as handle:
+        for raw_line in handle:
+            for uid, encoded_uid in uid_bytes.items():
+                if encoded_uid in raw_line:
+                    lines_by_uid[uid].append(
+                        raw_line.decode("utf-8", errors="replace")
+                    )
     return lines_by_uid
 
 

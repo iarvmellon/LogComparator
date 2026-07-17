@@ -215,9 +215,16 @@ with Notepad++. `Compare` is enabled only when exactly two rows are selected; it
 exports both logs and opens them in WinMerge. The program looks for
 `notepad++.exe` and `WinMergeU.exe` in `PATH` and in the standard 32-bit/64-bit
 Program Files install folders. Selected-row `Open` and `Compare` use a targeted
-export path that extracts only the audit blocks containing the selected
-`transUId` values from the in-memory block cache when available, so they are
-much faster than exporting a full day.
+memory-mapped export path that searches directly for the selected `transUId`
+values. It decodes only matching audit blocks instead of loading multi-GB audit
+files into RAM, so comparing two selected rows remains responsive.
+For a selected-row export, the first targeted audit lookup temporarily caches
+only that transaction's matching blocks. File generation reuses those blocks
+instead of scanning the same multi-GB audits a second time, and matching Tango
+lines are collected with streaming I/O.
+The initial transaction-list scan also records the byte offsets of each block.
+Later single-row exports seek directly to those offsets, avoiding even the
+first full-file search when the list has already been loaded.
 
 The `Timezone` combo changes only how the `Date/Time` column is displayed. The
 source timestamp is treated as UTC; choosing `UTC+1`, `UTC+2`, `UTC+3`,
