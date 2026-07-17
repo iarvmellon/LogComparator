@@ -229,6 +229,9 @@ table. `Sequence_Number` is read from audit values such as
 The TransUID, STAN, RRN, AuthCode, Sequence_Number, TransactionType, TID, MID,
 AMT, RC_SPDH, and RC_ISO fields are optional:
 
+For ISO audit records, `MID` also recognizes `cardAcceptorId`, while `AMT`
+prioritizes `transactionAmt` over auxiliary nested amount fields.
+
 - Empty fields: export every transaction that matches the selected bank.
 - Filled fields: export only transactions matching all filled values.
 

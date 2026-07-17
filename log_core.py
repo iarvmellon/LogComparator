@@ -93,11 +93,13 @@ LIST_FIELD_NAMES = {
     "tid",
     "trmid",
     "merchantid",
+    "cardacceptorid",
     "merchant",
     "mid",
     "amount",
     "amt",
     "transactionamount",
+    "transactionamt",
     "currency",
     "currencycode",
     "currcode",
@@ -426,13 +428,13 @@ def parse_block(text: str, index: int) -> BlockMeta:
         fields,
         audit_values,
         plain,
-        ("mid", "merchantid", "merchant"),
+        ("mid", "merchantid", "cardacceptorid", "merchant"),
     )
     amounts = values_for_names(
         fields,
         audit_values,
         plain,
-        ("amt", "amount", "transactionamount"),
+        ("transactionamt", "transactionamount", "amt", "amount"),
     )
     currencies = values_for_names(
         fields,
@@ -539,10 +541,12 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
                     "trmuid",
                     "mid",
                     "merchantid",
+                    "cardacceptorid",
                     "merchant",
                     "amt",
                     "amount",
                     "transactionamount",
+                    "transactionamt",
                     "currency",
                     "currencycode",
                     "currcode",
@@ -667,13 +671,13 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         fields,
         audit_values,
         plain,
-        ("mid", "merchantid", "merchant"),
+        ("mid", "merchantid", "cardacceptorid", "merchant"),
     )
     amounts = values_for_names(
         fields,
         audit_values,
         plain,
-        ("amt", "amount", "transactionamount"),
+        ("transactionamt", "transactionamount", "amt", "amount"),
     )
     currencies = values_for_names(
         fields,
@@ -767,13 +771,32 @@ def select_identifier(transaction: Transaction, name: str) -> str:
 
 
 def select_first(values: list[str]) -> str:
-    return next((value for value in values if value), "")
+    return next(
+        (
+            value
+            for value in values
+            if value and value.strip().lower() not in {"not available", "na", "n/a"}
+        ),
+        "",
+    )
 
 
 def select_amount_display(transaction: Transaction) -> str:
-    amount = select_first(transaction.amounts)
+    candidates = [
+        value
+        for value in transaction.amounts
+        if value and value.strip().lower() not in {"not available", "na", "n/a"}
+    ]
+    # ISO DE4 is a 12-digit value. Prefer it to shorter protocol-specific
+    # representations and to auxiliary token amounts collected in the same block.
+    amount = next(
+        (value for value in candidates if re.fullmatch(r"\d{12}", value)),
+        candidates[0] if candidates else "",
+    )
     if not amount:
         return ""
+    if re.search(r"\([^()]+\)$", amount):
+        return amount
     currency = select_first(transaction.currencies)
     return f"{amount}({currency})" if currency else amount
 
