@@ -60,6 +60,11 @@ Running `main.py` without local audit arguments starts the GUI:
 15. Select exactly two transaction rows to enable `Compare`; pressing it exports
     both logs and opens them in WinMerge.
 
+Large audit files are scanned with memory mapping. The transaction-list loader
+decodes only blocks containing a transaction ID and retains transaction metadata
+instead of caching full multi-gigabyte file contents, substantially reducing RAM
+usage and initial loading time.
+
 Use **Help > About** to view the program version and author (`IARV`). The
 version is stored as a static value in `version.py`, so it is available even
 when the application runs as an `.exe` or on a machine without git/Python. The
@@ -223,6 +228,21 @@ The TransUID, RRN, STAN, AuthCode, Sequence_Number, TransactionType, TID, MID,
 AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
 table. `Sequence_Number` is read from audit values such as
 `[0x1C68] Sequence_Number : asc<0010090800>`.
+`TransactionType` is resolved from the TANGO/ISO MTI and falls back to the
+processing code or audit message type, so the table column does not remain
+empty when an audit block has no recognized MTI.
+Text filters use a short 400 ms debounce. Typing another character cancels the
+pending refresh, so a large transaction table is rebuilt only after input
+pauses instead of once for every keystroke.
+
+Before the `TransUID` filter, permanently visible `From` and `To` controls show
+the year, month, day, hour, minute, and second of the minimum and maximum loaded
+timestamps. The date is selected with a GUI calendar and `HH:MM:SS` with
+dropdowns. The selected inclusive range acts as a live filter and follows the
+timezone selected in the GUI.
+After loading, the range initially covers the complete log day, from
+`00:00:00` through `23:59:59`, rather than only the first and last transaction
+times.
 
 ### TransUID
 

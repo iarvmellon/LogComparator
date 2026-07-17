@@ -3,6 +3,7 @@
 import argparse
 import gzip
 import io
+import mmap
 import os
 import queue
 import re
@@ -759,6 +760,21 @@ def select_iso_mti(transaction: Transaction) -> str:
     return candidates[0] if candidates else "UNKNOWN_MTI"
 
 
+def select_transaction_type(transaction: Transaction) -> str:
+    mti = select_iso_mti(transaction)
+    if mti in TANGO_TRANSACTION_MTI_NAMES:
+        return TANGO_TRANSACTION_MTI_NAMES[mti]
+    if mti in MTI_NAMES:
+        return MTI_NAMES[mti]
+    processing_code = select_first(transaction.processing_codes)
+    if processing_code:
+        return f"ProcessingCode_{processing_code}"
+    message_type = select_first(transaction.message_types)
+    if message_type:
+        return message_type
+    return "Unknown_Transaction_Type"
+
+
 def select_rrn(transaction: Transaction) -> str:
     return transaction.rrns[0] if transaction.rrns else "NO_RRN"
 
@@ -943,6 +959,26 @@ def iter_marker_blocks_from_text(
             yield block_text
 
 
+def iter_marker_blocks_from_file(path: Path) -> Iterator[str]:
+    """Yield only transaction blocks without loading a multi-GB file into RAM."""
+    separator = SEPARATOR_PREFIX.encode("ascii")
+    markers = (b"transUId", b"transUid")
+    with path.open("rb") as handle:
+        if path.stat().st_size == 0:
+            return
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+            start = 0
+            size = len(mapped)
+            while start < size:
+                next_separator = mapped.find(separator, start + len(separator))
+                end = size if next_separator == -1 else next_separator
+                if any(mapped.find(marker, start, end) != -1 for marker in markers):
+                    yield mapped[start:end].decode("utf-8", errors="replace")
+                if next_separator == -1:
+                    break
+                start = next_separator
+
+
 def file_text_cache_key(path: Path) -> tuple[str, int, int]:
     stat = path.stat()
     return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
@@ -1118,32 +1154,29 @@ def scan_transactions_for_list(
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Transaction]:
     transactions: dict[str, Transaction] = {}
-    blocks_by_uid: dict[str, list[tuple[int, str]]] = defaultdict(list)
     index = 0
     total_bytes = sum(path.stat().st_size for path in input_paths)
     processed_bytes = 0
     for input_path in input_paths:
-        text = read_text_cached(input_path)
-        processed_bytes += input_path.stat().st_size
-        if progress_callback:
-            progress_callback(
-                processed_bytes,
-                total_bytes,
-                f"Load transactions: {input_path.name}",
-            )
-        for block_text in iter_marker_blocks_from_text(text, TRANS_UID_MARKER_RE):
+        file_size = input_path.stat().st_size
+        for block_text in iter_marker_blocks_from_file(input_path):
             block = parse_block_for_list(block_text, index)
             if not block.trans_uid:
                 index += 1
                 continue
-            blocks_by_uid[block.trans_uid].append((index, block_text))
             transaction = transactions.setdefault(
                 block.trans_uid,
                 Transaction(trans_uid=block.trans_uid, first_index=index),
             )
             transaction.add(block)
             index += 1
-    AUDIT_BLOCK_TEXT_CACHE[input_paths_cache_key(input_paths)] = blocks_by_uid
+        processed_bytes += file_size
+        if progress_callback:
+            progress_callback(
+                processed_bytes,
+                total_bytes,
+                f"Load transactions: {input_path.name}",
+            )
     return transactions
 
 

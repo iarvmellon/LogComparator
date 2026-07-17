@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
-from tkcalendar import Calendar
+from tkcalendar import Calendar, DateEntry
 
 from gui_services import (
     download_uat_sources,
@@ -68,6 +68,16 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     folder_var = tk.StringVar(root)
     bank_var = tk.StringVar(root)
     timezone_var = tk.StringVar(root, value="UTC")
+    min_datetime_var = tk.StringVar(root)
+    max_datetime_var = tk.StringVar(root)
+    min_date_var = tk.StringVar(root)
+    max_date_var = tk.StringVar(root)
+    min_hour_var = tk.StringVar(root, value="00")
+    max_hour_var = tk.StringVar(root, value="23")
+    min_minute_var = tk.StringVar(root, value="00")
+    max_minute_var = tk.StringVar(root, value="59")
+    min_second_var = tk.StringVar(root, value="00")
+    max_second_var = tk.StringVar(root, value="59")
     trans_uid_var = tk.StringVar(root)
     stan_var = tk.StringVar(root)
     rrn_var = tk.StringVar(root)
@@ -97,6 +107,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         dict[str, Transaction],
     ] = {}
     transaction_load_token = {"value": 0}
+    filter_after_id: dict[str, str | None] = {"value": None}
+    FILTER_DEBOUNCE_MS = 400
     current_base_output = {"path": Path(base_output)}
     RUNTIME_SETTINGS.output = Path(base_output)
     RUNTIME_SETTINGS.user = DEFAULT_USER
@@ -126,6 +138,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         has_selected_bank = bool(bank_var.get().strip()) and bank_var.get() in available_banks
         entry_state = "normal" if has_selected_bank else "disabled"
         trans_uid_entry.configure(state=entry_state)
+        min_date_entry.configure(state="readonly" if has_selected_bank else "disabled")
+        max_date_entry.configure(state="readonly" if has_selected_bank else "disabled")
+        min_hour_combo.configure(state="readonly" if has_selected_bank else "disabled")
+        max_hour_combo.configure(state="readonly" if has_selected_bank else "disabled")
+        min_minute_combo.configure(state="readonly" if has_selected_bank else "disabled")
+        max_minute_combo.configure(state="readonly" if has_selected_bank else "disabled")
+        min_second_combo.configure(state="readonly" if has_selected_bank else "disabled")
+        max_second_combo.configure(state="readonly" if has_selected_bank else "disabled")
         stan_entry.configure(state=entry_state)
         rrn_entry.configure(state=entry_state)
         authcode_entry.configure(state=entry_state)
@@ -286,6 +306,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     def clear_bank_and_transactions() -> None:
         bank_var.set("")
         transaction_rows.clear()
+        min_datetime_var.set("")
+        max_datetime_var.set("")
+        min_date_var.set("")
+        max_date_var.set("")
         clear_transaction_list()
         update_compare_state()
 
@@ -615,6 +639,89 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         tk.Label(frame, text=label, anchor="center").pack(fill=tk.X)
         return frame
 
+    hour_values = tuple(f"{hour:02d}" for hour in range(24))
+    minute_second_values = tuple(f"{value:02d}" for value in range(60))
+
+    def datetime_filter_group(
+        label: str,
+        date_var: tk.StringVar,
+        hour_var: tk.StringVar,
+        minute_var: tk.StringVar,
+        second_var: tk.StringVar,
+    ):
+        frame = filter_group(label)
+        controls = tk.Frame(frame)
+        controls.pack(fill=tk.X)
+        date_entry = DateEntry(
+            controls,
+            textvariable=date_var,
+            date_pattern="yyyy-mm-dd",
+            width=10,
+            state="disabled",
+        )
+        date_entry.pack(side=tk.LEFT)
+        hour_combo = ttk.Combobox(
+            controls,
+            textvariable=hour_var,
+            values=hour_values,
+            width=3,
+            state="disabled",
+        )
+        hour_combo.pack(side=tk.LEFT, padx=(3, 0))
+        tk.Label(controls, text=":").pack(side=tk.LEFT)
+        minute_combo = ttk.Combobox(
+            controls,
+            textvariable=minute_var,
+            values=minute_second_values,
+            width=3,
+            state="disabled",
+        )
+        minute_combo.pack(side=tk.LEFT)
+        tk.Label(controls, text=":").pack(side=tk.LEFT)
+        second_combo = ttk.Combobox(
+            controls,
+            textvariable=second_var,
+            values=minute_second_values,
+            width=3,
+            state="disabled",
+        )
+        second_combo.pack(side=tk.LEFT)
+        return frame, date_entry, hour_combo, minute_combo, second_combo
+
+    (
+        min_datetime_group,
+        min_date_entry,
+        min_hour_combo,
+        min_minute_combo,
+        min_second_combo,
+    ) = datetime_filter_group(
+        "From (Year-Month-Day / HH:MM:SS)",
+        min_date_var,
+        min_hour_var,
+        min_minute_var,
+        min_second_var,
+    )
+    (
+        max_datetime_group,
+        max_date_entry,
+        max_hour_combo,
+        max_minute_combo,
+        max_second_combo,
+    ) = datetime_filter_group(
+        "To (Year-Month-Day / HH:MM:SS)",
+        max_date_var,
+        max_hour_var,
+        max_minute_var,
+        max_second_var,
+    )
+    min_date_entry.bind("<<DateEntrySelected>>", lambda _event: apply_datetime_control("min"))
+    max_date_entry.bind("<<DateEntrySelected>>", lambda _event: apply_datetime_control("max"))
+    min_hour_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("min"))
+    max_hour_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("max"))
+    min_minute_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("min"))
+    max_minute_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("max"))
+    min_second_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("min"))
+    max_second_combo.bind("<<ComboboxSelected>>", lambda _event: apply_datetime_control("max"))
     trans_uid_group = filter_group("TransUID")
     trans_uid_entry = tk.Entry(
         trans_uid_group,
@@ -868,7 +975,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 filter_groups[column].pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
         transaction_tree.configure(displaycolumns=visible_transaction_columns())
         autosize_transaction_columns()
-        apply_transaction_filters()
+        schedule_transaction_filters()
 
     def autosize_transaction_columns() -> None:
         row_font = tkfont.nametofont("TkDefaultFont")
@@ -935,7 +1042,59 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         displayed[0] = shifted_datetime.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return tuple(displayed)
 
+    def parse_row_datetime(value: str) -> datetime | None:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
+        except ValueError:
+            return None
+
+    def update_datetime_controls() -> None:
+        offset = timedelta(hours=selected_timezone_offset_hours())
+        for source_var, date_var, hour_var, minute_var, second_var in (
+            (
+                min_datetime_var, min_date_var, min_hour_var,
+                min_minute_var, min_second_var,
+            ),
+            (
+                max_datetime_var, max_date_var, max_hour_var,
+                max_minute_var, max_second_var,
+            ),
+        ):
+            parsed = parse_row_datetime(source_var.get())
+            if parsed:
+                displayed = parsed + offset
+                date_var.set(displayed.strftime("%Y-%m-%d"))
+                hour_var.set(displayed.strftime("%H"))
+                minute_var.set(displayed.strftime("%M"))
+                second_var.set(displayed.strftime("%S"))
+
+    def apply_datetime_control(bound: str) -> None:
+        date_var = min_date_var if bound == "min" else max_date_var
+        hour_var = min_hour_var if bound == "min" else max_hour_var
+        minute_var = min_minute_var if bound == "min" else max_minute_var
+        second_var = min_second_var if bound == "min" else max_second_var
+        target_var = min_datetime_var if bound == "min" else max_datetime_var
+        try:
+            displayed = datetime.strptime(
+                f"{date_var.get()} {hour_var.get()}:{minute_var.get()}:{second_var.get()}",
+                "%Y-%m-%d %H:%M:%S",
+            )
+        except ValueError:
+            return
+        if bound == "max":
+            displayed = displayed.replace(microsecond=999000)
+        utc_value = displayed - timedelta(hours=selected_timezone_offset_hours())
+        target_var.set(utc_value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3])
+        schedule_transaction_filters()
+
     def row_matches_filters(values: tuple[str, ...]) -> bool:
+        row_datetime = parse_row_datetime(values[0]) if values else None
+        minimum = parse_row_datetime(min_datetime_var.get())
+        maximum = parse_row_datetime(max_datetime_var.get())
+        if row_datetime and minimum and row_datetime < minimum:
+            return False
+        if row_datetime and maximum and row_datetime > maximum:
+            return False
         filters = {
             "transuid": trans_uid_var.get().strip(),
             "rrn": rrn_var.get().strip(),
@@ -956,6 +1115,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         return True
 
     def apply_transaction_filters(*_args) -> int:
+        filter_after_id["value"] = None
         clear_transaction_list()
         visible_count = 0
         for uid, values in transaction_rows:
@@ -977,6 +1137,18 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 f"Loaded transactions: {len(transaction_rows)}; visible: {visible_count}"
             )
         return visible_count
+
+    def schedule_transaction_filters(*_args) -> None:
+        pending_id = filter_after_id["value"]
+        if pending_id is not None:
+            try:
+                root.after_cancel(pending_id)
+            except tk.TclError:
+                pass
+        filter_after_id["value"] = root.after(
+            FILTER_DEBOUNCE_MS,
+            apply_transaction_filters,
+        )
 
     def show_column_filter_options() -> None:
         dialog = tk.Toplevel(root)
@@ -1063,11 +1235,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 if timestamp
                 else ""
             )
-            mti = select_iso_mti(transaction)
-            transaction_type = TANGO_TRANSACTION_MTI_NAMES.get(
-                mti,
-                MTI_NAMES.get(mti, mti),
-            )
+            transaction_type = select_transaction_type(transaction)
             rrn_value = select_rrn(transaction)
             values = (
                 readable_time,
@@ -1104,6 +1272,23 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         selected_date: str,
     ) -> None:
         transaction_rows[:] = rows
+        if rows:
+            selected_day = datetime.strptime(selected_date, "%Y-%m-%d")
+            timezone_offset = timedelta(hours=selected_timezone_offset_hours())
+            day_start = selected_day - timezone_offset
+            day_end = selected_day.replace(
+                hour=23, minute=59, second=59, microsecond=999000
+            ) - timezone_offset
+            min_datetime_var.set(
+                day_start.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            )
+            max_datetime_var.set(
+                day_end.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            )
+        else:
+            min_datetime_var.set("")
+            max_datetime_var.set("")
+        update_datetime_controls()
         visible_count = apply_transaction_filters()
         selected_date_var.set(selected_date)
         if not rows:
@@ -1201,7 +1386,11 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         load_transaction_list(event)
 
     bank_combo.bind("<<ComboboxSelected>>", on_bank_selected)
-    timezone_combo.bind("<<ComboboxSelected>>", apply_transaction_filters)
+    def on_timezone_selected(event=None) -> None:
+        update_datetime_controls()
+        apply_transaction_filters()
+
+    timezone_combo.bind("<<ComboboxSelected>>", on_timezone_selected)
     for filter_var in (
         trans_uid_var,
         rrn_var,
@@ -1215,7 +1404,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         response_code_spdh_var,
         response_code_iso_var,
     ):
-        filter_var.trace_add("write", apply_transaction_filters)
+        filter_var.trace_add("write", schedule_transaction_filters)
 
     bottom_bar = tk.Frame(root)
     bottom_bar.pack(fill=tk.X, padx=12, pady=(0, 8))
