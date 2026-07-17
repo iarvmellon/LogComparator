@@ -268,14 +268,16 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     )
     folder_frame = tk.Frame(root)
     folder_frame.pack(fill=tk.X, padx=12, pady=(4, 4))
-    tk.Label(folder_frame, text="Log folder:").pack(side=tk.LEFT, padx=(0, 8))
+    data_frame = tk.LabelFrame(folder_frame, text="Data", padx=6, pady=3)
+    data_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    tk.Label(data_frame, text="Log folder:").pack(side=tk.LEFT, padx=(0, 8))
     folder_entry = tk.Entry(
-        folder_frame, textvariable=folder_var, state="readonly", width=72
+        data_frame, textvariable=folder_var, state="readonly", width=72
     )
     folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    tk.Label(folder_frame, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(14, 8))
+    tk.Label(data_frame, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(14, 8))
     bank_combo = ttk.Combobox(
-        folder_frame,
+        data_frame,
         textvariable=bank_var,
         values=list(BANK_AUDIT_CODES),
         state="disabled",
@@ -644,7 +646,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     response_code_validate = max_length_validator(6)
     amount_validate = max_length_validator(8)
 
-    fields = tk.Frame(root)
+    fields = tk.LabelFrame(root, text="Filters", padx=6, pady=4)
     fields.pack(fill=tk.X, padx=12, pady=(4, 4))
 
     def filter_group(label: str) -> tk.Frame:

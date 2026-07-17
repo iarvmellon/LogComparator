@@ -262,6 +262,8 @@ empty when an audit block has no recognized MTI.
 Text filters use a short 400 ms debounce. Typing another character cancels the
 pending refresh, so a large transaction table is rebuilt only after input
 pauses instead of once for every keystroke.
+All transaction text-filter controls are grouped inside a bordered `Filters`
+area. The separate `Time range` area remains on the upper source row.
 
 Before the `TransUID` filter, permanently visible `From` and `To` controls show
 the year, month, day, hour, minute, and second of the minimum and maximum loaded
@@ -274,6 +276,8 @@ times.
 The `Log folder` field expands into the available horizontal space. The
 `From`, `To`, and `Timezone` controls are grouped in a separate bordered
 `Time range` area that aligns with the right side of the upper row.
+`Log folder` and `Bank/Acquirer` are grouped together in a bordered `Data`
+area beside `Time range`.
 The short `From` and `To` labels appear inline immediately before their date
 and `HH:MM:SS` controls rather than above them.
 Changing `Timezone` converts the visible `From` and `To` values along with the
