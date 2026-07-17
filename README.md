@@ -22,14 +22,14 @@ Running `main.py` without local audit arguments starts the GUI:
 
 1. Open the main `LogComparator` application window.
    The window opens maximized.
-2. Use **Tools > Import** for local files, or **File > SSH/SCP (UAT)** for UAT
+2. Use **File > Import** for local files, or **File > SSH/SCP (UAT)** for UAT
    download.
-3. Use **File > Export options** to choose `SPDH+ISO`, `ISO`, or `SPDH`,
+3. Use **Tools > Export options** to choose `SPDH+ISO`, `ISO`, or `SPDH`,
    whether byte/data sections are included, and which audit blocks are exported.
 4. The generated-file and byte/data options are also available in the options
    bar directly below the menu. `Open`, `Export`, and `Compare` are also
    available under the **Tools** menu.
-5. For `Log folder`, use **Tools > Import** to select a local folder that
+5. For `Log folder`, use **File > Import** to select a local folder that
    contains the daily Tango log, PTMS audit, and selected bank OPN audit,
    compressed or uncompressed. No calendar is shown for this mode; the date is
    read from the folder's `tango.log...` filename. The selected path appears in
@@ -52,7 +52,7 @@ Running `main.py` without local audit arguments starts the GUI:
 10. Use the cached/extracted source files for parsing.
 11. Parse all selected audit files as one chronological dataset.
 12. Group records into complete transaction flows.
-13. Press `Export` or use **Tools > Export** to create one `.log` file for
+13. Press `Export` or use **File > Export** to create one `.log` file for
     every selected transaction/row that matches the filters. The main window
     remains open and reports completion or errors in the GUI.
 14. Select one or more transaction rows and press `Open` to export them and open
@@ -85,7 +85,7 @@ Progress, errors, and completion statistics are printed in the console.
 
 The source is selected as follows:
 
-- `Log folder`: use **Tools > Import** to select a local folder with the source files. The
+- `Log folder`: use **File > Import** to select a local folder with the source files. The
   folder should contain one daily `tango.log...` file, one
   `audit.PTMS...` file, and one selected-bank `audit.OPN...` file for the
   target date. Files may be plain text, `.gz`, or `.gzip`; compressed files are
@@ -143,7 +143,7 @@ The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
 
 The bank controls the OPN audit process and the bank-filtering rules.
 It is disabled until a source is available: import a folder with
-**Tools > Import**, or select an SSH/SCP date first. The `TransUID`,
+**File > Import**, or select an SSH/SCP date first. The `TransUID`,
 `STAN`, `RRN`, `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`,
 `AMT`, `RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
 way.
@@ -260,6 +260,8 @@ times.
 The `Log folder` field expands into the available horizontal space. The
 `From`, `To`, and `Timezone` controls are grouped in a separate bordered
 `Time range` area that aligns with the right side of the upper row.
+The short `From` and `To` labels appear inline immediately before their date
+and `HH:MM:SS` controls rather than above them.
 Changing `Timezone` converts the visible `From` and `To` values along with the
 table's `Date/Time` values. For example, changing from `UTC` to `UTC+3` adds
 three hours to both displayed bounds while preserving the same absolute range.
@@ -288,7 +290,7 @@ rewrite unrelated existing transaction files.
 
 ### Generated Files
 
-The generated file type is selected from **File > Export options** or
+The generated file type is selected from **Tools > Export options** or
 from the `Generated files` controls below the menu:
 
 - `SPDH+ISO`: write both PTMS/SPDH and OPN/ISO audit blocks.
@@ -301,7 +303,7 @@ for protocol-filtered runs.
 
 ### Byte/Data
 
-The same **File > Export options** menu and the `Byte/Data` checkbox
+The same **Tools > Export options** menu and the `Byte/Data` checkbox
 below the menu control verbose payload sections:
 
 - `Include byte/data`: keep the full detailed data sections in full

@@ -463,10 +463,13 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         output_entry.focus_set()
         root.wait_window(dialog)
 
+    file_menu.add_command(label="Import", command=import_log_folder)
     file_menu.add_command(label=SOURCE_SSH_UAT, command=select_ssh_source)
-    file_menu.add_cascade(label="Export options", menu=generated_menu)
+    file_menu.add_command(label="Open", command=lambda: open_selected_logs())
+    file_menu.add_command(label="Export", command=lambda: submit())
     file_menu.add_separator()
     file_menu.add_command(label="Exit", command=root.destroy)
+    tools_menu.add_cascade(label="Export options", menu=generated_menu)
     menubar.add_cascade(label="File", menu=file_menu)
     menubar.add_cascade(label="Edit", menu=edit_menu)
     menubar.add_cascade(label="View", menu=view_menu)
@@ -656,9 +659,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     ):
         frame = tk.Frame(time_filter_frame)
         frame.pack(side=tk.LEFT, padx=(4, 0), before=timezone_label)
-        tk.Label(frame, text=label, anchor="center").pack(fill=tk.X)
+        tk.Label(frame, text=label, anchor="e").pack(side=tk.LEFT, padx=(0, 4))
         controls = tk.Frame(frame)
-        controls.pack(fill=tk.X)
+        controls.pack(side=tk.LEFT)
         date_entry = DateEntry(
             controls,
             textvariable=date_var,
@@ -702,7 +705,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         min_minute_combo,
         min_second_combo,
     ) = datetime_filter_group(
-        "From (Year-Month-Day / HH:MM:SS)",
+        "From",
         min_date_var,
         min_hour_var,
         min_minute_var,
@@ -715,7 +718,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         max_minute_combo,
         max_second_combo,
     ) = datetime_filter_group(
-        "To (Year-Month-Day / HH:MM:SS)",
+        "To",
         max_date_var,
         max_hour_var,
         max_minute_var,
@@ -1739,9 +1742,6 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     edit_menu.add_command(label="Select all transactions", command=select_all_transactions)
     edit_menu.add_command(label="Clear selection", command=clear_transaction_selection)
     view_menu.add_command(label="Columns / Filters...", command=show_column_filter_options)
-    tools_menu.add_command(label="Import", command=import_log_folder)
-    tools_menu.add_command(label="Open", command=open_selected_logs)
-    tools_menu.add_command(label="Export", command=submit)
     tools_menu.add_command(
         label="Compare",
         command=compare_selected_logs,
