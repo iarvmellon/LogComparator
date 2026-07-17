@@ -318,6 +318,23 @@ def execute_gui_export(
             f"No transaction matched the selected filters for "
             f"{bank} on {selected_date} with protocol {protocol_choice}."
         )
+    selected_uid_count = len(set(selected_trans_uids))
+    if selected_uid_count and stats["transactions"] != selected_uid_count:
+        raise ValueError(
+            f"Export created {stats['transactions']} of {selected_uid_count} "
+            "selected transactions."
+        )
+    if selected_uid_count:
+        missing_outputs = [
+            date_dir / f"{safe_component(uid)}.log"
+            for uid in set(selected_trans_uids)
+            if not (date_dir / f"{safe_component(uid)}.log").is_file()
+        ]
+        if missing_outputs:
+            raise ValueError(
+                f"Selected transaction output was not created: "
+                f"{missing_outputs[0].name}"
+            )
     summary = (
         f"Environment: {environment}\n"
         f"Bank: {bank}\n"

@@ -1595,6 +1595,13 @@ def write_outputs(
             for _, _, text in blocks:
                 output.write(text)
 
+    # A selected transaction must always produce its own file, even when the
+    # active protocol/direction options exclude all of its audit blocks.
+    for uid, filename in filenames.items():
+        target = output_dir / filename
+        uid_by_path[target] = uid
+        blocks_by_path.setdefault(target, [])
+
     for target, blocks in blocks_by_path.items():
         uid = uid_by_path.get(target)
         write_file(
@@ -1628,8 +1635,9 @@ def split_audit_files(
     if not input_paths:
         raise ValueError("No audit files were supplied for analysis.")
     transaction_uid = (transaction_uid or "").strip()
-    selected_transaction_uids = set(transaction_uids or set())
-    if transaction_uid:
+    row_selected_uids = set(transaction_uids or set())
+    selected_transaction_uids = set(row_selected_uids)
+    if transaction_uid and not row_selected_uids:
         selected_transaction_uids.add(transaction_uid)
     use_target_fast_path = bool(selected_transaction_uids)
     transactions, correlated = scan_transactions(
@@ -1671,6 +1679,10 @@ def split_audit_files(
     identifier_filters = {
         name: value for name, value in identifier_filters.items() if value
     }
+    if row_selected_uids:
+        # Explicit row selection takes precedence. GUI text filters use
+        # substring matching, while export identifier filters are exact.
+        identifier_filters = {}
     if identifier_filters:
         targeted = {
             uid: transaction
@@ -1684,6 +1696,9 @@ def split_audit_files(
         transactions = targeted
     response_code_spdh = (response_code_spdh or "").strip()
     response_code_iso = (response_code_iso or "").strip()
+    if row_selected_uids:
+        response_code_spdh = ""
+        response_code_iso = ""
     if response_code_spdh or response_code_iso:
         targeted = {
             uid: transaction

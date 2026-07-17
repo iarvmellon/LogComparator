@@ -191,18 +191,23 @@ transactions in a table with:
 
 Click any column header to sort the displayed rows by that column. The table
 supports selecting one or more rows. If rows are selected when `Export` runs,
-only those selected transUIDs are exported. While the list is being built, the
+only those selected transUIDs are exported. Explicit row selection takes
+precedence over active text filters, so every selected TRX is written to a
+separate `.log` file even when a text filter contains a partial value. While
+the list is being built, the
 bottom-right progress bar shows `Load transactions` with a determinate
 percentage. Loaded rows are cached per bank/date/source-file fingerprint so
 returning to the same selection is fast. The transaction-list scan uses an
 in-memory fast path that extracts only audit blocks containing `transUId` and
 skips uncorrelated no-`transUId` blocks. For speed, the list parser reads only
 the fields needed by the table and filters, and ignores the heavy `Raw data`
-payload while building rows. The same scan also keeps the matching audit block
-text in memory for the current app session, so selected-row `Open`, `Export`,
-and `Compare` can write one or two transaction logs immediately without
-rescanning very large audit files. Full-day exports still perform complete
-correlation for the generated `.log`.
+payload while building rows. The same scan records audit block byte offsets,
+so selected-row `Open`, `Export`, and `Compare` can seek directly to every
+selected transaction without rescanning very large audit files. Full-day
+exports still perform complete correlation for the generated `.log`.
+Every explicitly selected TRX produces an output file even when the active
+protocol or direction options exclude all of its audit blocks; in that case
+the file still contains the available transaction summary and Tango lines.
 
 When a bank/acquirer has more than one OPN audit file for the same date, all
 files in the same numeric OPN family are loaded together. For example,
@@ -211,7 +216,9 @@ files in the same numeric OPN family are loaded together. For example,
 they exist.
 
 `Open` exports the selected row(s) first, then opens the generated `.log` files
-with Notepad++. `Compare` is enabled only when exactly two rows are selected; it
+with Notepad++. Multiple selected rows are exported to separate files and all
+of them are passed to the same Notepad++ launch. `Compare` is enabled only when
+exactly two rows are selected; it
 exports both logs and opens them in WinMerge. The program looks for
 `notepad++.exe` and `WinMergeU.exe` in `PATH` and in the standard 32-bit/64-bit
 Program Files install folders. Selected-row `Open` and `Compare` use a targeted
@@ -250,6 +257,15 @@ timezone selected in the GUI.
 After loading, the range initially covers the complete log day, from
 `00:00:00` through `23:59:59`, rather than only the first and last transaction
 times.
+The `Log folder` field expands into the available horizontal space. The
+`From`, `To`, and `Timezone` controls are grouped in a separate bordered
+`Time range` area that aligns with the right side of the upper row.
+Changing `Timezone` converts the visible `From` and `To` values along with the
+table's `Date/Time` values. For example, changing from `UTC` to `UTC+3` adds
+three hours to both displayed bounds while preserving the same absolute range.
+On initial loading, transaction timestamps are converted to the active
+timezone first. `From` is then set to `00:00:00` on the first resulting local
+date and `To` to `23:59:59` on the last resulting local date.
 
 ### TransUID
 

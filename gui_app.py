@@ -269,7 +269,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     folder_frame = tk.Frame(root)
     folder_frame.pack(fill=tk.X, padx=12, pady=(4, 4))
     tk.Label(folder_frame, text="Log folder:").pack(side=tk.LEFT, padx=(0, 8))
-    folder_entry = tk.Entry(folder_frame, textvariable=folder_var, state="readonly")
+    folder_entry = tk.Entry(
+        folder_frame, textvariable=folder_var, state="readonly", width=72
+    )
     folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
     tk.Label(folder_frame, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(14, 8))
     bank_combo = ttk.Combobox(
@@ -280,9 +282,12 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         width=25,
     )
     bank_combo.pack(side=tk.LEFT)
-    tk.Label(folder_frame, text="Timezone:").pack(side=tk.LEFT, padx=(14, 8))
+    time_filter_frame = tk.LabelFrame(folder_frame, text="Time range", padx=6, pady=3)
+    time_filter_frame.pack(side=tk.LEFT, padx=(14, 0))
+    timezone_label = tk.Label(time_filter_frame, text="Timezone:")
+    timezone_label.pack(side=tk.LEFT, padx=(10, 5))
     timezone_combo = ttk.Combobox(
-        folder_frame,
+        time_filter_frame,
         textvariable=timezone_var,
         values=("UTC", "UTC+1", "UTC+2", "UTC+3", "UTC-1", "UTC-2", "UTC-3"),
         state="readonly",
@@ -649,7 +654,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         minute_var: tk.StringVar,
         second_var: tk.StringVar,
     ):
-        frame = filter_group(label)
+        frame = tk.Frame(time_filter_frame)
+        frame.pack(side=tk.LEFT, padx=(4, 0), before=timezone_label)
+        tk.Label(frame, text=label, anchor="center").pack(fill=tk.X)
         controls = tk.Frame(frame)
         controls.pack(fill=tk.X)
         date_entry = DateEntry(
@@ -1273,10 +1280,26 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     ) -> None:
         transaction_rows[:] = rows
         if rows:
-            selected_day = datetime.strptime(selected_date, "%Y-%m-%d")
             timezone_offset = timedelta(hours=selected_timezone_offset_hours())
-            day_start = selected_day - timezone_offset
-            day_end = selected_day.replace(
+            local_timestamps = [
+                parsed + timezone_offset
+                for _, values in rows
+                if values and (parsed := parse_row_datetime(values[0])) is not None
+            ]
+            first_local_day = (
+                min(local_timestamps)
+                if local_timestamps
+                else datetime.strptime(selected_date, "%Y-%m-%d")
+            )
+            last_local_day = (
+                max(local_timestamps)
+                if local_timestamps
+                else datetime.strptime(selected_date, "%Y-%m-%d")
+            )
+            day_start = first_local_day.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) - timezone_offset
+            day_end = last_local_day.replace(
                 hour=23, minute=59, second=59, microsecond=999000
             ) - timezone_offset
             min_datetime_var.set(
@@ -1387,6 +1410,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
     bank_combo.bind("<<ComboboxSelected>>", on_bank_selected)
     def on_timezone_selected(event=None) -> None:
+        # The stored bounds are UTC; display their converted values in the
+        # newly selected timezone, just like the Date/Time table column.
         update_datetime_controls()
         apply_transaction_filters()
 
@@ -1610,6 +1635,13 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             return
         result = export_current_selection(show_completion=False)
         if result is None:
+            return
+        if set(result.selected_trans_uids) != set(selected_uids):
+            messagebox.showerror(
+                "Open failed",
+                "Not all selected transactions were included in the export.",
+                parent=root,
+            )
             return
         paths = selected_log_paths(result.output_dir, selected_uids)
         missing = [path for path in paths if not path.is_file()]
