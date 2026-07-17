@@ -1880,7 +1880,13 @@ def cache_local_file(source_path: Path, local_dir: Path) -> Path:
     if local_path.resolve() == source_path.resolve():
         return local_path
     if local_path.is_file():
-        return local_path
+        source_stat = source_path.stat()
+        local_stat = local_path.stat()
+        if (
+            source_stat.st_size == local_stat.st_size
+            and source_stat.st_mtime_ns == local_stat.st_mtime_ns
+        ):
+            return local_path
     shutil.copy2(source_path, local_path)
     return local_path
 

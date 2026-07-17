@@ -319,13 +319,16 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         update_compare_state()
 
     def import_log_folder() -> None:
-        folder = filedialog.askdirectory(title="Select log folder")
+        try:
+            DEFAULT_IMPORT.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        folder = filedialog.askdirectory(
+            title="Select log folder",
+            initialdir=str(DEFAULT_IMPORT),
+        )
         if folder:
             folder_path = Path(folder)
-
-            def update_extract_progress(current: int, total: int, message: str) -> None:
-                percent = (current / total) * 100 if total else 100
-                show_inline_progress(f"{message} ({percent:.0f}%)", percent)
 
             try:
                 root.config(cursor="watch")
@@ -334,7 +337,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 root.update_idletasks()
                 extract_gzip_files_in_folder(
                     folder_path,
-                    progress_callback=update_extract_progress,
+                    progress_callback=lambda current, total, message: show_inline_progress(
+                        message,
+                        (current / total) * 100 if total else 100,
+                    ),
                 )
                 validate_local_log_folder(folder_path)
             except (OSError, ValueError) as exc:
@@ -351,14 +357,14 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 environment_var.set(SOURCE_LOG_FOLDER)
             clear_filters()
             clear_bank_and_transactions()
-            folder_var.set(folder)
+            folder_var.set(str(folder_path))
             clear_selected_remote_date()
             update_source_state()
             update_bank_state()
             status_var.set("Folder loaded. Please select the bank.")
             messagebox.showinfo(
                 "Folder loaded",
-                f"Folder loaded. Please select the bank.\n\n{folder}",
+                f"Folder loaded. Please select the bank.\n\n{folder_path}",
                 parent=root,
             )
 

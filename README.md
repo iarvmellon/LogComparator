@@ -13,7 +13,19 @@ C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
 The default generated-log directory is:
 
 ```text
-C:\Users\j.arvanitis\Desktop\Tango\Logs\LogComparator
+C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator
+```
+
+The recommended import root is:
+
+```text
+C:\Users\j.arvanitis\Desktop\Tango\Import\<YYYY-MM-DD>
+```
+
+Generated files are organized under:
+
+```text
+C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator\<BANK>\<YYYY-MM-DD>
 ```
 
 ## Main workflow
@@ -88,13 +100,15 @@ The source is selected as follows:
 - `Log folder`: use **File > Import** to select a local folder with the source files. The
   folder should contain one daily `tango.log...` file, one
   `audit.PTMS...` file, and one selected-bank `audit.OPN...` file for the
-  target date. Files may be plain text, `.gz`, or `.gzip`; compressed files are
-  extracted immediately during import before transactions are scanned.
+  target date. Place the files beforehand under
+  `C:\Users\j.arvanitis\Desktop\Tango\Import\<YYYY-MM-DD>` and select that
+  folder directly. Files may be plain text, `.gz`, or `.gzip`; compressed files
+  are extracted there before transactions are scanned. No import copy is made.
 - `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
   all UAT source files for that day into `LogComparator\<YYYY-MM-DD>_UAT`.
 
-Log folder `.gz` and `.gzip` files are extracted in place first. The scanner
-then reads the plain decompressed files, not the compressed files. During
+Imported `.gz` and `.gzip` files are extracted inside the selected folder.
+The scanner then reads the plain decompressed files, not the compressed files. During
 export, source files are copied into the exported output `source` directory
 before analysis. If both plain and compressed versions of the same source file
 are present, the plain file is preferred to avoid duplicate audit blocks.

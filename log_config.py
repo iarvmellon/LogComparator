@@ -8,9 +8,12 @@ from version import VERSION
 
 
 DEFAULT_INPUT = Path(
-    r"C:\Users\j.arvanitis\Desktop\Tango\Logs\audit.OPNBISOBKT01.2026-03-06"
+    r"C:\Users\j.arvanitis\Desktop\Tango\Import\2026-03-06\audit.OPNBISOBKT01.2026-03-06"
 )
-DEFAULT_OUTPUT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Logs\LogComparator")
+DEFAULT_IMPORT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Import")
+DEFAULT_OUTPUT = Path(
+    r"C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator"
+)
 APP_VERSION = VERSION
 APP_AUTHOR = "IARV"
 DEFAULT_HOST = "10.1.110.84"
