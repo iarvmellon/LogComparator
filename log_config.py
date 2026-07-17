@@ -12,7 +12,7 @@ DEFAULT_INPUT = Path(
 )
 DEFAULT_IMPORT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Import")
 DEFAULT_OUTPUT = Path(
-    r"C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator"
+    r"C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs"
 )
 APP_VERSION = VERSION
 APP_AUTHOR = "IARV"

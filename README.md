@@ -13,7 +13,7 @@ C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
 The default generated-log directory is:
 
 ```text
-C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator
+C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs
 ```
 
 The recommended import root is:
@@ -25,7 +25,7 @@ C:\Users\j.arvanitis\Desktop\Tango\Import\<YYYY-MM-DD>
 Generated files are organized under:
 
 ```text
-C:\Users\j.arvanitis\Desktop\Tango\LogComparator\LogComparator\<BANK>\<YYYY-MM-DD>
+C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs\<BANK>\<YYYY-MM-DD>
 ```
 
 ## Main workflow

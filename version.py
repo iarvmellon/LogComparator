@@ -1,5 +1,5 @@
 MAJOR = 1
 MINOR = 0
-BUILD = 19
+BUILD = 20
 
-VERSION = "1.0.19"
+VERSION = "1.0.20"
