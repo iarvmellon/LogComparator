@@ -64,14 +64,16 @@ def download_uat_sources(
     downloaded: list[Path] = []
     for remote_path in remote_paths:
         report(f"Downloading: {Path(remote_path).name}")
-        downloaded.append(download_remote_file(remote_path, target_dir))
+        downloaded.append(
+            download_remote_file(remote_path, target_dir, overwrite=True)
+        )
         current_step += 1
         report(f"Downloading complete: {Path(remote_path).name}")
 
     extracted: list[Path] = []
     for path in downloaded:
         report(f"Extracting: {path.name}")
-        extracted.append(decompress_file(path))
+        extracted.append(decompress_file(path, overwrite=True))
         current_step += 1
         report(f"Extracting complete: {path.name}")
     has_tango = any(path.name.startswith("tango.log") for path in extracted)

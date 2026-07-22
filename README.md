@@ -77,11 +77,28 @@ decodes only blocks containing a transaction ID and retains transaction metadata
 instead of caching full multi-gigabyte file contents, substantially reducing RAM
 usage and initial loading time.
 
-Use **Help > About** to view the program version and author (`IARV`). The
-version is stored as a static value in `version.py`, so it is available even
-when the application runs as an `.exe` or on a machine without git/Python. The
-tracked pre-commit hook in `.githooks/pre-commit` updates `version.py` before
-each commit using `MAJOR.MINOR.<next commit count>`.
+Use **Help > About** to view the release tag, `git describe` build identifier,
+exact Git hash, source state, and author (`IARV`). A value such as
+`v1.0.21-3-gaadf381c63e5-dirty` identifies the nearest release, commit distance,
+exact abbreviated commit, and uncommitted build changes. Versioning comes
+entirely from annotated Git tags; there is no pre-commit version counter.
+`build_info.py` is generated immediately before PyInstaller and is ignored by
+Git, while source runs without it use an `untagged/development-unbuilt`
+fallback.
+
+Create a correctly identified executable with:
+
+```powershell
+.\.venv\Scripts\python.exe update_build_info.py
+pyinstaller --onefile --name LogComparator main.py
+```
+
+Create a release tag only after committing the release source:
+
+```powershell
+git tag -a v1.0.22 -m "LogComparator v1.0.22"
+git push origin v1.0.22
+```
 
 Enable the tracked hook once per clone:
 
@@ -151,7 +168,9 @@ Only highlighted dates can be selected. Selecting a date downloads:
 - `audit.PTMS...`
 - all `audit.OPN...` files
 
-The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`.
+The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`. Every calendar
+selection downloads all matching files again and extracts them again, including
+when the same date was selected previously and local files already exist.
 
 ### Bank/Acquirer
 
@@ -367,22 +386,22 @@ LogComparator\<BANK>\<YYYY-MM-DD>\source
 The bank name is made Windows-safe, so `CASYS/FIBANK` becomes
 `CASYS_FIBANK`.
 
-For both modes, if a basename already exists locally, the download/copy is
-skipped:
+For `Log folder`, if a basename already exists locally, the copy is skipped:
 
 ```text
 Using existing file: ...
 ```
 
-If a `.gz` or `.gzip` file already has a decompressed sibling, decompression is
-also skipped:
+If a `.gz` or `.gzip` file imported through `Log folder` already has a
+decompressed sibling, decompression is also skipped:
 
 ```text
 Using existing decompressed file: ...
 ```
 
-The cache is intentionally based on filename existence. Delete a cached source
-file manually when a fresh remote copy is required.
+The `SSH/SCP (UAT)` calendar does not reuse this source cache: each selected date
+is downloaded and extracted again so the local UAT folder reflects the current
+remote files.
 
 ## Transaction correlation
 
@@ -814,11 +833,12 @@ not remove unrelated transactions.
 The calendar periodically returns control to Python so Ctrl+C can be processed.
 SSH/SCP subprocesses are also bounded by configured timeouts.
 
-### No new download or copy occurs
+### No new copy occurs in Log folder mode
 
-The source cache is active. Remove the corresponding file from the bank and
-date-specific `source` directory when a fresh SSH/SCP download or log-folder
-copy is required.
+The `Log folder` source cache is active. Remove the corresponding file from the
+bank and date-specific `source` directory when a fresh log-folder copy is
+required. Calendar selection in `SSH/SCP (UAT)` always downloads and extracts
+the selected date again.
 
 ## Project files
 

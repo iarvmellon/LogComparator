@@ -488,7 +488,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             "About LogComparator",
             (
                 "LogComparator\n"
-                f"Version: {APP_VERSION}\n"
+                f"Release tag: {APP_VERSION}\n"
+                f"Build: {APP_BUILD_DESCRIBE}\n"
+                f"Git hash: {APP_GIT_HASH}\n"
+                f"Source state: {'modified' if APP_GIT_DIRTY else 'clean'}\n"
                 f"Author: {APP_AUTHOR}"
             ),
             parent=root,

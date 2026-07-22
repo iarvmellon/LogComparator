@@ -4,7 +4,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from version import VERSION
+try:
+    from build_info import BUILD_DESCRIBE, GIT_DIRTY, GIT_HASH, RELEASE_TAG
+except ImportError:
+    BUILD_DESCRIBE = "development-unbuilt"
+    RELEASE_TAG = "untagged"
+    GIT_HASH = "unknown"
+    GIT_DIRTY = True
 
 
 DEFAULT_INPUT = Path(
@@ -14,7 +20,10 @@ DEFAULT_IMPORT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Import")
 DEFAULT_OUTPUT = Path(
     r"C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs"
 )
-APP_VERSION = VERSION
+APP_VERSION = RELEASE_TAG
+APP_BUILD_DESCRIBE = BUILD_DESCRIBE
+APP_GIT_HASH = GIT_HASH
+APP_GIT_DIRTY = GIT_DIRTY
 APP_AUTHOR = "IARV"
 DEFAULT_HOST = "10.1.110.84"
 DEFAULT_USER = "j.arvanitis"

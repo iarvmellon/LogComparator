@@ -1792,11 +1792,18 @@ def run_remote_command(command: str, sudo: bool = False) -> str:
     return completed.stdout
 
 
-def download_remote_file(remote_path: str, local_dir: Path) -> Path:
+def download_remote_file(
+    remote_path: str,
+    local_dir: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / Path(remote_path).name
-    if local_path.is_file():
+    if local_path.is_file() and not overwrite:
         return local_path
+    if overwrite:
+        local_path.unlink(missing_ok=True)
     if shutil.which("scp") is None:
         raise RuntimeError("The 'scp' executable was not found on PATH.")
     args = [
@@ -1831,12 +1838,14 @@ def is_gzip_file(path: Path) -> bool:
     return path.suffix.lower() in COMPRESSED_FILE_SUFFIXES
 
 
-def decompress_file(path: Path) -> Path:
+def decompress_file(path: Path, *, overwrite: bool = False) -> Path:
     if not is_gzip_file(path):
         return path
     output_path = path.with_suffix("")
-    if output_path.is_file():
+    if output_path.is_file() and not overwrite:
         return output_path
+    if overwrite:
+        output_path.unlink(missing_ok=True)
     try:
         with gzip.open(path, "rb") as source, output_path.open("wb") as destination:
             for line in source:

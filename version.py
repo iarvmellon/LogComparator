@@ -1,5 +1,0 @@
-MAJOR = 1
-MINOR = 0
-BUILD = 21
-
-VERSION = "1.0.21"
