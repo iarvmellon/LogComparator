@@ -4,6 +4,7 @@ import ctypes
 import os
 import shutil
 import subprocess
+from datetime import date
 from pathlib import Path
 
 from log_core import *
@@ -28,32 +29,37 @@ def list_remote_logs_for_date(selected_date: str) -> list[str]:
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 
-def list_remote_uat_sources(selected_date: str) -> list[str]:
-    compact_date = selected_date.replace("-", "")
+def list_remote_uat_sources(selected_date: str, bank: str) -> list[str]:
     log_paths = list_remote_logs_for_date(selected_date)
-    command = (
-        f"find {REMOTE_AUDIT_DIR} -maxdepth 1 -type f \\( "
-        f"-name 'audit.PTMS*.*{selected_date}*' -o "
-        f"-name 'audit.PTMS*.*{compact_date}*' -o "
-        f"-name 'audit.OPN*.*{selected_date}*' -o "
-        f"-name 'audit.OPN*.*{compact_date}*' \\) -print | sort"
-    )
-    output = run_remote_command(command, sudo=True)
-    audit_paths = [line.strip() for line in output.splitlines() if line.strip()]
+    if bank == "All":
+        compact_date = selected_date.replace("-", "")
+        command = (
+            f"find {REMOTE_AUDIT_DIR} -maxdepth 1 -type f \\( "
+            f"-name 'audit.PTMS*.*{selected_date}*' -o "
+            f"-name 'audit.PTMS*.*{compact_date}*' -o "
+            f"-name 'audit.OPN*.*{selected_date}*' -o "
+            f"-name 'audit.OPN*.*{compact_date}*' \\) -print | sort"
+        )
+        output = run_remote_command(command, sudo=True)
+        audit_paths = [line.strip() for line in output.splitlines() if line.strip()]
+    else:
+        audit_paths = list_remote_audits(selected_date, bank)
     return list(dict.fromkeys(log_paths + audit_paths))
 
 
 def download_uat_sources(
     selected_date: str,
+    bank: str,
     output_root: Path,
     progress_callback=None,
 ) -> Path:
-    target_dir = output_root / f"{selected_date}_UAT"
+    target_dir = output_root / f"{selected_date}_UAT" / bank_directory_name(bank)
     target_dir.mkdir(parents=True, exist_ok=True)
-    remote_paths = list_remote_uat_sources(selected_date)
+    remote_paths = list_remote_uat_sources(selected_date, bank)
     if not remote_paths:
-        raise ValueError(f"No UAT source files were found for {selected_date}.")
+        raise ValueError(f"No UAT source files were found for {bank} on {selected_date}.")
 
+    force_refresh = selected_date == date.today().isoformat()
     total_steps = len(remote_paths) * 2
     current_step = 0
 
@@ -63,29 +69,60 @@ def download_uat_sources(
 
     downloaded: list[Path] = []
     for remote_path in remote_paths:
-        report(f"Downloading: {Path(remote_path).name}")
-        downloaded.append(
-            download_remote_file(remote_path, target_dir, overwrite=True)
-        )
+        local_path = target_dir / Path(remote_path).name
+        file_already_exists = local_path.is_file() and not force_refresh
+        if file_already_exists:
+            report(f"Existing file, skipping download: {local_path.name}")
+            downloaded.append(local_path)
+        else:
+            report(f"Downloading: {Path(remote_path).name}")
+            downloaded.append(
+                download_remote_file(
+                    remote_path,
+                    target_dir,
+                    overwrite=force_refresh,
+                )
+            )
         current_step += 1
-        report(f"Downloading complete: {Path(remote_path).name}")
+        if file_already_exists:
+            report(f"Existing file ready: {local_path.name}")
+        else:
+            report(f"Downloading complete: {Path(remote_path).name}")
 
     extracted: list[Path] = []
     for path in downloaded:
-        report(f"Extracting: {path.name}")
-        extracted.append(decompress_file(path, overwrite=True))
+        extracted_path = path.with_suffix("") if is_gzip_file(path) else path
+        extracted_file_already_exists = extracted_path.is_file() and not force_refresh
+        if extracted_file_already_exists:
+            report(f"Existing extracted file: {extracted_path.name}")
+        else:
+            report(f"Extracting: {path.name}")
+        extracted.append(decompress_file(path, overwrite=force_refresh))
         current_step += 1
-        report(f"Extracting complete: {path.name}")
+        if extracted_file_already_exists:
+            report(f"Existing extracted file ready: {extracted_path.name}")
+        else:
+            report(f"Extracting complete: {path.name}")
     has_tango = any(path.name.startswith("tango.log") for path in extracted)
     has_ptms = any(path.name.startswith("audit.PTMS") for path in extracted)
-    has_opn = any(path.name.startswith("audit.OPN") for path in extracted)
+    has_opn = any(
+        path.name.startswith("audit.OPN")
+        and (
+            bank == "All"
+            or bank_audit_code_matches(bank, path.name.split(".")[1])
+        )
+        for path in extracted
+    )
     missing = []
     if not has_tango:
         missing.append("tango.log*")
     if not has_ptms:
         missing.append("audit.PTMS*")
     if not has_opn:
-        missing.append("audit.OPN*")
+        if bank == "All":
+            missing.append("audit.OPN*")
+        else:
+            missing.append(f"audit.{BANK_AUDIT_CODES[bank][:-2]}##*")
     if missing:
         raise ValueError(
             f"Missing UAT source file(s) for {selected_date}: {', '.join(missing)}"

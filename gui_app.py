@@ -507,7 +507,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     action_frame = tk.Frame(root)
     action_frame.pack(fill=tk.X, padx=12, pady=(4, 6))
 
-    def choose_remote_date_window(paths: list[str]) -> tuple[str, str] | None:
+    def choose_remote_date_window(paths: list[str]) -> tuple[str, str, str] | None:
         valid_dates: dict[str, str] = {}
         for path in paths:
             date_part = parse_log_date(any_path_name(path))
@@ -518,8 +518,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
         dialog = tk.Toplevel(root)
         dialog.title("Select SSH/SCP date")
-        dialog.geometry("420x360")
-        dialog.minsize(380, 330)
+        dialog.geometry("440x420")
+        dialog.minsize(400, 390)
         dialog.transient(root)
         dialog.grab_set()
 
@@ -542,6 +542,19 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         remote_calendar.tag_config("valid", background="#c8f7c5", foreground="black")
         remote_calendar.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
+        bank_row = tk.Frame(dialog)
+        bank_row.pack(fill=tk.X, padx=10, pady=(6, 2))
+        tk.Label(bank_row, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(0, 8))
+        remote_bank_var = tk.StringVar(dialog)
+        remote_bank_combo = ttk.Combobox(
+            bank_row,
+            textvariable=remote_bank_var,
+            values=["All", *BANK_AUDIT_CODES],
+            state="readonly",
+            width=24,
+        )
+        remote_bank_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
         def selected_date():
             try:
                 return datetime.strptime(remote_calendar.get_date(), "%m/%d/%y").date()
@@ -557,8 +570,18 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     parent=dialog,
                 )
                 return
+            chosen_bank = remote_bank_var.get().strip()
+            if chosen_bank != "All" and chosen_bank not in BANK_AUDIT_CODES:
+                messagebox.showwarning(
+                    "Bank required",
+                    "Please select a bank/acquirer.",
+                    parent=dialog,
+                )
+                remote_bank_combo.focus_set()
+                return
             result["date"] = chosen.strftime("%Y-%m-%d")
             result["path"] = valid_date_objects[chosen]
+            result["bank"] = chosen_bank
             dialog.destroy()
 
         def cancel_date() -> None:
@@ -566,7 +589,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
         button_frame = tk.Frame(dialog)
         button_frame.pack(pady=(8, 12))
-        tk.Button(button_frame, text="Select", command=submit_date).pack(
+        tk.Button(button_frame, text="OK", command=submit_date).pack(
             side=tk.LEFT,
             padx=4,
         )
@@ -578,7 +601,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         root.wait_window(dialog)
         if not result:
             return None
-        return result["date"], result["path"]
+        return result["date"], result["path"], result["bank"]
 
     def select_ssh_date() -> None:
         def update_progress(current: int, total: int, message: str) -> None:
@@ -596,12 +619,15 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             selected = choose_remote_date_window(list_remote_logs())
             if selected is None:
                 return
-            selected_date, selected_path = selected
-            status_var.set(f"Downloading UAT sources for {selected_date}...")
+            selected_date, selected_path, selected_bank = selected
+            status_var.set(
+                f"Downloading UAT sources for {selected_bank} on {selected_date}..."
+            )
             show_inline_progress("Preparing download...", 0)
             root.update_idletasks()
             uat_folder = download_uat_sources(
                 selected_date,
+                selected_bank,
                 base_output,
                 progress_callback=update_progress,
             )
@@ -622,6 +648,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             folder_var.set(str(uat_folder))
             selected_date_var.set(selected_date)
             update_bank_state()
+            if selected_bank != "All" and selected_bank in bank_combo.cget("values"):
+                bank_var.set(selected_bank)
+                update_bank_state()
+                load_transaction_list()
             status_var.set(f"UAT sources ready: {uat_folder}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
             messagebox.showerror("Select date failed", str(exc))
@@ -1723,6 +1753,44 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         transaction_tree.selection_remove(transaction_tree.selection())
         update_compare_state()
 
+    transaction_context_menu = tk.Menu(root, tearoff=0)
+    transaction_context_menu.add_command(label="Open", command=open_selected_logs)
+    transaction_context_menu.add_command(label="Export", command=submit)
+    transaction_context_menu.add_command(
+        label="Compare",
+        command=compare_selected_logs,
+        state=tk.DISABLED,
+    )
+
+    def select_transaction_at_pointer(event) -> str:
+        item_id = transaction_tree.identify_row(event.y)
+        if not item_id:
+            return ""
+        if item_id not in transaction_tree.selection():
+            transaction_tree.selection_set(item_id)
+            transaction_tree.focus(item_id)
+            update_compare_state()
+        return item_id
+
+    def open_transaction_on_double_click(event) -> str | None:
+        if not select_transaction_at_pointer(event):
+            return None
+        open_selected_logs()
+        return "break"
+
+    def show_transaction_context_menu(event) -> str | None:
+        if not select_transaction_at_pointer(event):
+            return None
+        compare_state = (
+            tk.NORMAL if len(transaction_tree.selection()) == 2 else tk.DISABLED
+        )
+        transaction_context_menu.entryconfig("Compare", state=compare_state)
+        try:
+            transaction_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            transaction_context_menu.grab_release()
+        return "break"
+
     open_button = tk.Button(
         command_options,
         text="Open",
@@ -1759,6 +1827,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         state=tk.DISABLED,
     )
     transaction_tree.bind("<<TreeviewSelect>>", update_compare_state)
+    transaction_tree.bind("<Double-Button-1>", open_transaction_on_double_click)
+    transaction_tree.bind("<Button-3>", show_transaction_context_menu)
     update_source_state()
     folder_var.trace_add("write", lambda *_args: update_bank_state())
     update_bank_state()

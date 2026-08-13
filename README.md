@@ -48,13 +48,18 @@ Running `main.py` without local audit arguments starts the GUI:
    the read-only `Log folder` field.
 6. For `SSH/SCP (UAT)`, a separate calendar window opens automatically after
    the remote `tango.log*` list is loaded.
-7. Select a date in the SSH/SCP calendar when using SSH/SCP mode. The selected
-   day's `tango.log*`, `audit.PTMS...`, and all `audit.OPN...` files are
-   downloaded and extracted immediately under `LogComparator\<YYYY-MM-DD>_UAT`.
+7. Select a highlighted date and a bank/acquirer in the SSH/SCP window, then
+   press **OK**. Only the selected day's `tango.log*`, `audit.PTMS...`, and the
+   OPN audit family mapped to that bank/acquirer are downloaded and extracted
+   under `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`. Select `All` to download and
+   extract every OPN audit file for the date.
    The extracted folder path is written into the `Log folder` field.
    Progress is shown in the bottom-right progress bar of the main window while
    files are downloaded and extracted.
-8. Select a bank/acquirer, and optionally enter `TransUID`, `STAN`, `RRN`,
+8. A specifically downloaded bank/acquirer is selected automatically. With
+   `All`, select one of the available banks in the main window. The transaction
+   list for a specifically downloaded bank is loaded automatically. Optionally enter
+   `TransUID`, `STAN`, `RRN`,
    `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`, `AMT`,
    `RC_SPDH`, or `RC_ISO` filters. The bank list
    contains only choices matching the available `audit.OPN...` files in the
@@ -154,23 +159,31 @@ patterns include that exact date, for example `audit.PTMS*.*2026-07-13*`. The
 validation also rejects an audit file that exists only for a different date.
 
 For `SSH/SCP (UAT)`, the calendar opens automatically in a separate window when
-the mode is selected. After choosing a highlighted date, all matching UAT source
-files are downloaded and extracted, then the selected date is shown in the main
-window and the extracted `<YYYY-MM-DD>_UAT` path is written into the
-`Log folder` field. Use **File > SSH/SCP (UAT)** to choose another date.
+the mode is selected. Choose a highlighted date and a bank/acquirer, then press
+**OK**. The matching Tango log, PTMS audit, and selected bank's OPN audit family
+are downloaded and extracted. Select `All` when every OPN audit for the date is
+needed. A specific selected bank is populated automatically in the main window;
+after `All`, choose a bank from the main Bank/Acquirer list. The extracted
+`<YYYY-MM-DD>_UAT\<BANK>` or `<YYYY-MM-DD>_UAT\All` path is written into the
+`Log folder` field. Use **File > SSH/SCP (UAT)** to choose another date or bank.
 
 ### Calendar
 
 The calendar is used only for `SSH/SCP (UAT)` and opens in a separate window.
-Only highlighted dates can be selected. Selecting a date downloads:
+Only highlighted dates can be selected, and a Bank/Acquirer selection is
+required before **OK** can continue. The download contains only:
 
 - `tango.log*`
 - `audit.PTMS...`
-- all `audit.OPN...` files
+- the `audit.OPN...` family mapped to the selected bank/acquirer
 
-The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT`. Every calendar
-selection downloads all matching files again and extracts them again, including
-when the same date was selected previously and local files already exist.
+Selecting `All` downloads and extracts all matching `audit.OPN...` files for
+the selected date.
+
+The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`. For a
+past date, each file already present in that final folder is not downloaded
+again; no separate download cache is created. Files for today's date are always
+downloaded and extracted again so the folder contains the latest audit data.
 
 ### Bank/Acquirer
 
@@ -275,9 +288,15 @@ The TransUID, RRN, STAN, AuthCode, Sequence_Number, TransactionType, TID, MID,
 AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
 table. `Sequence_Number` is read from audit values such as
 `[0x1C68] Sequence_Number : asc<0010090800>`.
-`TransactionType` is resolved from the TANGO/ISO MTI and falls back to the
-processing code or audit message type, so the table column does not remain
-empty when an audit block has no recognized MTI.
+`TransactionType` is resolved from the current TANGO/ISO MTI and falls back to
+the processing code or audit message type, so the table column does not remain
+empty when an audit block has no recognized MTI. The current MTI takes priority
+over `originMti`/`tgOriginMti`; for example, a `4554` referencing an original
+`4530` is displayed as `Purchase_Void`, and `4581` is displayed as
+`Purchase_Void_Reversal`.
+Double-clicking a transaction row exports its flow and opens the generated log
+in Notepad++. Right-clicking a row opens a context menu with `Open`, `Export`,
+and `Compare`; `Compare` is enabled only when exactly two rows are selected.
 Text filters use a short 400 ms debounce. Typing another character cancels the
 pending refresh, so a large transaction table is rebuilt only after input
 pauses instead of once for every keystroke.
@@ -368,7 +387,7 @@ written into the exported `.log`:
 For `SSH/SCP (UAT)`, source files are downloaded and extracted under:
 
 ```text
-LogComparator\<YYYY-MM-DD>_UAT
+LogComparator\<YYYY-MM-DD>_UAT\<BANK>
 ```
 
 Exported transaction logs for UAT are written under:
@@ -399,9 +418,9 @@ decompressed sibling, decompression is also skipped:
 Using existing decompressed file: ...
 ```
 
-The `SSH/SCP (UAT)` calendar does not reuse this source cache: each selected date
-is downloaded and extracted again so the local UAT folder reflects the current
-remote files.
+The `SSH/SCP (UAT)` calendar skips files already present in the final folder for
+past date/bank combinations. Today's files are always downloaded and extracted
+again because the active audit files can still change during the day.
 
 ## Transaction correlation
 

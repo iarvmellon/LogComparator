@@ -392,16 +392,19 @@ def parse_block(text: str, index: int) -> BlockMeta:
     trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
     trans_uid = trans_uids[0] if trans_uids else None
 
+    # The current message MTI identifies the operation shown in WebTANGO.
+    # originMti/tgOriginMti only identify the operation being referenced (for
+    # example 4530 for a 4554 void), so they must remain fallback candidates.
     mti_values = unique_nonempty(
-        fields.get("originmti", [])
-        + fields.get("tgoriginmti", [])
-        + fields.get("mti", [])
-        + audit_values.get("originmti", [])
-        + audit_values.get("tgoriginmti", [])
-        + fields.get("msgid", [])
-        + audit_values.get("msgid", [])
+        fields.get("mti", [])
         + audit_values.get("mti", [])
         + HEADER_MTI_RE.findall(message_type)
+        + fields.get("msgid", [])
+        + audit_values.get("msgid", [])
+        + fields.get("originmti", [])
+        + fields.get("tgoriginmti", [])
+        + audit_values.get("originmti", [])
+        + audit_values.get("tgoriginmti", [])
     )
     rrn_values = unique_nonempty(
         fields.get("retrievrefnumber", [])
@@ -635,16 +638,18 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
 
     trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
     trans_uid = trans_uids[0] if trans_uids else None
+    # Match parse_block(): prefer the current operation over its referenced
+    # origin so voids and reversals are labelled with their actual MTI.
     mti_values = unique_nonempty(
-        fields.get("originmti", [])
-        + fields.get("tgoriginmti", [])
-        + fields.get("mti", [])
-        + audit_values.get("originmti", [])
-        + audit_values.get("tgoriginmti", [])
-        + fields.get("msgid", [])
-        + audit_values.get("msgid", [])
+        fields.get("mti", [])
         + audit_values.get("mti", [])
         + HEADER_MTI_RE.findall(message_type)
+        + fields.get("msgid", [])
+        + audit_values.get("msgid", [])
+        + fields.get("originmti", [])
+        + fields.get("tgoriginmti", [])
+        + audit_values.get("originmti", [])
+        + audit_values.get("tgoriginmti", [])
     )
     rrn_values = unique_nonempty(
         fields.get("retrievrefnumber", [])
