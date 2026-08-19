@@ -126,10 +126,23 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         selected_remote_log.clear()
         selected_date_var.set("Not selected")
 
-    def update_bank_state() -> None:
+    def update_bank_state(preselected_bank: str | None = None) -> None:
         folder_text = folder_var.get().strip()
         available_banks = available_banks_for_folder(Path(folder_text)) if folder_text else []
+        if (
+            preselected_bank
+            and preselected_bank != "All"
+            and preselected_bank in BANK_AUDIT_CODES
+            and preselected_bank not in available_banks
+        ):
+            available_banks = [
+                bank
+                for bank in BANK_AUDIT_CODES
+                if bank in {*available_banks, preselected_bank}
+            ]
         bank_combo.configure(values=available_banks)
+        if preselected_bank and preselected_bank != "All":
+            bank_var.set(preselected_bank)
         if bank_var.get() not in available_banks:
             bank_var.set("")
             clear_transaction_list()
@@ -647,10 +660,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             folder_entry.configure(state="readonly")
             folder_var.set(str(uat_folder))
             selected_date_var.set(selected_date)
-            update_bank_state()
-            if selected_bank != "All" and selected_bank in bank_combo.cget("values"):
-                bank_var.set(selected_bank)
-                update_bank_state()
+            update_bank_state(selected_bank)
+            if selected_bank != "All":
                 load_transaction_list()
             status_var.set(f"UAT sources ready: {uat_folder}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:

@@ -56,9 +56,10 @@ Running `main.py` without local audit arguments starts the GUI:
    The extracted folder path is written into the `Log folder` field.
    Progress is shown in the bottom-right progress bar of the main window while
    files are downloaded and extracted.
-8. A specifically downloaded bank/acquirer is selected automatically. With
-   `All`, select one of the available banks in the main window. The transaction
-   list for a specifically downloaded bank is loaded automatically. Optionally enter
+8. A specifically downloaded bank/acquirer is placed automatically in the main
+   `Bank/Acquirer` combobox and its transaction list is loaded immediately,
+   without requiring a second selection. With `All`, select one of the available
+   banks in the main window. Optionally enter
    `TransUID`, `STAN`, `RRN`,
    `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`, `AMT`,
    `RC_SPDH`, or `RC_ISO` filters. The bank list
