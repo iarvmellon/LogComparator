@@ -128,7 +128,11 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
 
     def update_bank_state(preselected_bank: str | None = None) -> None:
         folder_text = folder_var.get().strip()
-        available_banks = available_banks_for_folder(Path(folder_text)) if folder_text else []
+        available_banks = (
+            list(BANK_AUDIT_CODES)
+            if folder_text and Path(folder_text).is_dir()
+            else []
+        )
         if (
             preselected_bank
             and preselected_bank != "All"
@@ -293,6 +297,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         data_frame,
         textvariable=bank_var,
         values=list(BANK_AUDIT_CODES),
+        height=len(BANK_AUDIT_CODES),
         state="disabled",
         width=25,
     )
@@ -563,6 +568,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             bank_row,
             textvariable=remote_bank_var,
             values=["All", *BANK_AUDIT_CODES],
+            height=len(BANK_AUDIT_CODES) + 1,
             state="readonly",
             width=24,
         )

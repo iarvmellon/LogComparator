@@ -63,8 +63,8 @@ Running `main.py` without local audit arguments starts the GUI:
    `TransUID`, `STAN`, `RRN`,
    `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`, `AMT`,
    `RC_SPDH`, or `RC_ISO` filters. The bank list
-   contains only choices matching the available `audit.OPN...` files in the
-   selected/extracted folder.
+   contains all configured banks/acquirers, including `NEXI/COSMOTE`, once
+   a source folder is selected.
    After a bank/acquirer is selected, the transaction list is populated.
 9. Locate the daily Tango log, PTMS audit, and selected bank OPN audit.
 10. Use the cached/extracted source files for parsing.
@@ -195,10 +195,11 @@ It is disabled until a source is available: import a folder with
 `AMT`, `RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
 way.
 
-The bank list is built from the `audit.OPN...` files found in the active source
-folder. For example, a folder containing `audit.OPNBISOBKT01...` enables
-`AKTIF/BKT`; a folder containing `audit.OPNBISOCAS01...` enables the CASYS
-bank/acquirer choices mapped to that audit process.
+The bank list shows all configured banks/acquirers once a source folder is
+selected, including `NEXI/COSMOTE`. Missing bank audit files do not hide
+choices from the list. Transactions still require matching source data.
+Both Bank/Acquirer dropdowns show all choices without scrolling, including
+the final `NEXI/COSMOTE` entry after `All` in the SSH/SCP dialog.
 
 | GUI bank | OPN process |
 | --- | --- |
@@ -211,7 +212,15 @@ bank/acquirer choices mapped to that audit process.
 | BORICA/PROCREDIT | OPNWAY4B01 |
 | NBG | OPNWAY4N01 |
 | EUROBANK | OPNBISOE01 |
-| COSMOTE/NEXI | OPNBISOC01 |
+| NEXI/COSMOTE | OPNBISOC01 |
+
+The displayed name is `NEXI/COSMOTE` (previously `COSMOTE/NEXI`). After
+changing bank mappings in `log_config.py`, rebuild and open
+`dist/LogComparator.exe` to use the updated names and bank list behavior.
+For `NEXI/COSMOTE` transaction data, import a folder containing `audit.OPNBISOC01...`
+(or another numbered instance in the `OPNBISOC` family). Its acquirer ID
+is `061`. Build using the project's `.venv\Scripts\pyinstaller.exe` so
+the executable includes the installed `tkcalendar` dependency.
 
 Filtering is strict. A transaction is retained when it contains either the
 selected OPN process or a configured acquirer identifier for that bank. This
