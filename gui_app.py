@@ -961,6 +961,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         height=18,
         selectmode="extended",
     )
+    transaction_tree.tag_configure("approved", background="#c8f7c5", foreground="#000000")
     column_labels = {
         "datetime": "Date/Time",
         "transuid": "transUid",
@@ -1193,6 +1194,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     tk.END,
                     iid=uid,
                     values=display_values_for_timezone(values),
+                    tags=("approved",) if (
+                        values[transaction_columns.index("responsecodespdh")] == "Approved(000)"
+                        and values[transaction_columns.index("responsecodeiso")] == "Approved(00)"
+                    ) else (),
                 )
                 visible_count += 1
         autosize_transaction_columns()

@@ -245,6 +245,15 @@ transactions in a table with:
 - RC_SPDH
 - RC_ISO
 
+Rows have a green background when both `RC_SPDH` is `Approved(000)` and
+`RC_ISO` is `Approved(00)`. A missing or non-approved response in either
+column leaves the row with its normal background. Highlighting is preserved
+when filtering, sorting, or reloading cached transactions.
+Each RC column shows `Unknown` until a response containing a response code
+is recorded for that protocol. Request defaults such as `000`/`00` and
+internal messages are ignored. ISO requires an OPN `NETWORK-->TANGO`
+response; SPDH requires a PTMS `TANGO-->NETWORK` response.
+
 Click any column header to sort the displayed rows by that column. The table
 supports selecting one or more rows. If rows are selected when `Export` runs,
 only those selected transUIDs are exported. Explicit row selection takes
@@ -298,9 +307,11 @@ The TransUID, RRN, STAN, AuthCode, Sequence_Number, TransactionType, TID, MID,
 AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
 table. `Sequence_Number` is read from audit values such as
 `[0x1C68] Sequence_Number : asc<0010090800>`.
-`TransactionType` is resolved from the current TANGO/ISO MTI and falls back to
-the processing code or audit message type, so the table column does not remain
-empty when an audit block has no recognized MTI. The current MTI takes priority
+`TransactionType` is resolved from the current TANGO/ISO MTI and displays
+`Unknown` when the MTI is missing or unrecognized. MTI `0800` is displayed
+as `Logon`.
+Processing codes such as `000000` are not transaction names and are never
+displayed as synthetic `ProcessingCode_...` types. The current MTI takes priority
 over `originMti`/`tgOriginMti`; for example, a `4554` referencing an original
 `4530` is displayed as `Purchase_Void`, and `4581` is displayed as
 `Purchase_Void_Reversal`.

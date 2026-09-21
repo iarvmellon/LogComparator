@@ -115,7 +115,7 @@ MTI_NAMES = {
     "0541": "File_Update_Notification_Ack",
     "0560": "Settlement_Request",
     "0570": "Settlement_Response",
-    "0800": "Network_Management_Request_(Echo_Sign-on_Sign-off_Key_Exchange)",
+    "0800": "Logon",
     "0810": "Network_Management_Response",
     "0820": "Network_Management_Advice",
     "0830": "Network_Management_Advice_Response",

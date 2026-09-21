@@ -178,14 +178,14 @@ class Transaction:
         flow_type = block.flow_type.upper()
         if (
             block.process_name.upper().startswith("OPN")
-            and "NETWORK-->TANGO" in flow_dir
-            and "RESPONSE" in flow_type
+            and flow_dir == "NETWORK-->TANGO"
+            and re.match(r"^RESPONSE\b", flow_type.strip())
         ):
             self.iso_response_codes.extend(block.response_codes)
         if (
             block.process_name.upper().startswith("PTMS")
-            and "TANGO-->NETWORK" in flow_dir
-            and "RESPONSE" in flow_type
+            and flow_dir == "TANGO-->NETWORK"
+            and re.match(r"^RESPONSE\b", flow_type.strip())
         ):
             self.spdh_response_codes.extend(block.response_codes)
         self.acquirer_ids.update(block.acquirer_ids)
@@ -775,13 +775,7 @@ def select_transaction_type(transaction: Transaction) -> str:
         return TANGO_TRANSACTION_MTI_NAMES[mti]
     if mti in MTI_NAMES:
         return MTI_NAMES[mti]
-    processing_code = select_first(transaction.processing_codes)
-    if processing_code:
-        return f"ProcessingCode_{processing_code}"
-    message_type = select_first(transaction.message_types)
-    if message_type:
-        return message_type
-    return "Unknown_Transaction_Type"
+    return "Unknown"
 
 
 def select_rrn(transaction: Transaction) -> str:
@@ -831,8 +825,8 @@ def select_response_code(values: list[str]) -> str:
 
 
 def response_code_component(code: str, names: dict[str, str]) -> str:
-    if code == "NA":
-        return "Not_available(NA)"
+    if not code or code == "NA":
+        return "Unknown"
     return f"{names.get(code, 'Unknown_response_code')}({code})"
 
 
