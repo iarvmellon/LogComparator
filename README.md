@@ -218,21 +218,26 @@ the final `NEXI/COSMOTE` entry after `All` in the SSH/SCP dialog.
 The displayed name is `NEXI/COSMOTE` (previously `COSMOTE/NEXI`). After
 changing bank mappings in `log_config.py`, rebuild and open
 `dist/LogComparator.exe` to use the updated names and bank list behavior.
-For `NEXI/COSMOTE` transaction data, import a folder containing `audit.OPNBISOC01...`
+For `NEXI/COSMOTE` transaction data, import a folder containing
+`audit.OPNBISOC01.<date>` (with or without a `.log` suffix)
 (or another numbered instance in the `OPNBISOC` family). Its acquirer ID
 is `061`. Build using the project's `.venv\Scripts\pyinstaller.exe` so
 the executable includes the installed `tkcalendar` dependency.
 
-Filtering is strict. A transaction is retained when it contains either the
-selected OPN process or a configured acquirer identifier for that bank. This
+For banks other than `AKTIF/BKT` and `AKTIF/BKTKOS`, a transaction is retained
+when it contains either the selected OPN process or a configured acquirer
+identifier for that bank. This
 prevents, for example, an OTP PTMS-only flow from being written into
 `CASYS_FIBANK`.
 
 `AKTIF/BKT` and `AKTIF/BKTKOS` are separate choices. Both use the
 `OPNBISOBKT01` audit family, but transaction lists and exports distinguish
-them by acquirer ID: `050` for BKT and `065` for BKTKOS. The shared process
+them by acquirer ID: `050` for `AKTIF/BKT` and `065` for `AKTIF/BKTKOS`. The shared process
 name alone does not assign a transaction to either bank; a matching acquirer
 ID is required.
+For example, an `acqId=065` transaction in `audit.OPNBISOBKT01.<date>`
+appears under `AKTIF/BKTKOS`, not under `AKTIF/BKT`. Transactions without
+either matching acquirer ID are omitted from both lists.
 
 ### Transaction List
 
@@ -260,6 +265,18 @@ Each RC column shows `Unknown` until a response containing a response code
 is recorded for that protocol. Request defaults such as `000`/`00` and
 internal messages are ignored. ISO requires an OPN `NETWORK-->TANGO`
 response; SPDH requires a PTMS `TANGO-->NETWORK` response.
+
+| RC_SPDH | RC_ISO | Row background |
+| --- | --- | --- |
+| Approved(000) | Approved(00) | Green |
+| Unknown | Approved(00) | Normal |
+| Approved(000) | Unknown | Normal |
+| Unknown | Unknown | Normal |
+| Any decline | Any value | Normal |
+| Any value | Any decline | Normal |
+
+`Unknown` applies independently to each protocol. A request containing a
+default approval code does not establish that a response was received.
 
 Click any column header to sort the displayed rows by that column. The table
 supports selecting one or more rows. If rows are selected when `Export` runs,
@@ -650,7 +667,7 @@ When no business TANGO MTI exists, the ISO MTI description is used, for example:
 - `0210 -> Financial_Response`
 - `0400 -> Reversal_Request`
 - `0420 -> Reversal_Advice`
-- `0800 -> Network_Management_Request_(...)`
+- `0800 -> Logon`
 
 ## Response codes
 
@@ -667,7 +684,7 @@ responseCode: asc<xx>
 
 ### SPDH response code
 
-The SPDH RC is taken only from the final PTMS external response block:
+The SPDH RC is taken only from a PTMS external response block:
 
 ```text
 Process name: PTMS...
