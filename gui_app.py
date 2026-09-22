@@ -1286,17 +1286,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             progress_callback(85.0, "Using cached transactions")
         if progress_callback:
             progress_callback(88.0, "Build transaction list")
-        expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
         matching = [
             transaction
             for transaction in transactions.values()
-            if (
-                transaction.acquirer_ids & expected_ids
-                or any(
-                    bank_audit_code_matches(bank, process_name)
-                    for process_name in transaction.process_names
-                )
-            )
+            if transaction_matches_bank(transaction, bank)
         ]
         matching.sort(key=lambda transaction: transaction.first_index)
         rows: list[tuple[str, tuple[str, ...]]] = []

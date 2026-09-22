@@ -757,6 +757,17 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
     )
 
 
+def transaction_matches_bank(transaction: Transaction, bank: str) -> bool:
+    expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
+    if bank in {"AKTIF/BKT", "AKTIF/BKTKOS"}:
+        # The shared OPN process cannot distinguish these two acquirers.
+        return bool(transaction.acquirer_ids & expected_ids)
+    return bool(transaction.acquirer_ids & expected_ids) or any(
+        bank_audit_code_matches(bank, process_name)
+        for process_name in transaction.process_names
+    )
+
+
 def select_iso_mti(transaction: Transaction) -> str:
     candidates = transaction.request_mtis + transaction.mtis
     # Prefer business TANGO MTIs over ISO and internal security/action MTIs.
@@ -1647,17 +1658,10 @@ def split_audit_files(
     )
     excluded_uids: set[str] = set()
     if bank and not use_target_fast_path:
-        expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
         matching = {
             uid: transaction
             for uid, transaction in transactions.items()
-            if (
-                transaction.acquirer_ids & expected_ids
-                or any(
-                    bank_audit_code_matches(bank, process_name)
-                    for process_name in transaction.process_names
-                )
-            )
+            if transaction_matches_bank(transaction, bank)
         }
         excluded_uids = set(transactions) - set(matching)
         transactions = matching

@@ -206,7 +206,8 @@ the final `NEXI/COSMOTE` entry after `All` in the SSH/SCP dialog.
 | CASYS/STOPANSKA | OPNBISOCAS01 |
 | CASYS/FIBANK | OPNBISOCAS01 |
 | CASYS/RUBICON | OPNBISOCAS01 |
-| AKTIF/BKT | OPNBISOBKT01 |
+| AKTIF/BKT | OPNBISOBKT01 (acquirer ID 050) |
+| AKTIF/BKTKOS | OPNBISOBKT01 (acquirer ID 065) |
 | EURONET/OTP | OPNRENOTP01 family, for example OPNRENOTP01 and OPNRENOTP02 |
 | NEXI/ALPHA | OPNBISOA01 |
 | BORICA/PROCREDIT | OPNWAY4B01 |
@@ -226,6 +227,12 @@ Filtering is strict. A transaction is retained when it contains either the
 selected OPN process or a configured acquirer identifier for that bank. This
 prevents, for example, an OTP PTMS-only flow from being written into
 `CASYS_FIBANK`.
+
+`AKTIF/BKT` and `AKTIF/BKTKOS` are separate choices. Both use the
+`OPNBISOBKT01` audit family, but transaction lists and exports distinguish
+them by acquirer ID: `050` for BKT and `065` for BKTKOS. The shared process
+name alone does not assign a transaction to either bank; a matching acquirer
+ID is required.
 
 ### Transaction List
 
