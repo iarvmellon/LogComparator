@@ -89,7 +89,6 @@ def download_uat_sources(
         else:
             report(f"Downloading complete: {Path(remote_path).name}")
 
-    extracted: list[Path] = []
     for path in downloaded:
         extracted_path = path.with_suffix("") if is_gzip_file(path) else path
         extracted_file_already_exists = extracted_path.is_file() and not force_refresh
@@ -97,36 +96,12 @@ def download_uat_sources(
             report(f"Existing extracted file: {extracted_path.name}")
         else:
             report(f"Extracting: {path.name}")
-        extracted.append(decompress_file(path, overwrite=force_refresh))
+        decompress_file(path, overwrite=force_refresh)
         current_step += 1
         if extracted_file_already_exists:
             report(f"Existing extracted file ready: {extracted_path.name}")
         else:
             report(f"Extracting complete: {path.name}")
-    has_tango = any(path.name.startswith("tango.log") for path in extracted)
-    has_ptms = any(path.name.startswith("audit.PTMS") for path in extracted)
-    has_opn = any(
-        path.name.startswith("audit.OPN")
-        and (
-            bank == "All"
-            or bank_audit_code_matches(bank, path.name.split(".")[1])
-        )
-        for path in extracted
-    )
-    missing = []
-    if not has_tango:
-        missing.append("tango.log*")
-    if not has_ptms:
-        missing.append("audit.PTMS*")
-    if not has_opn:
-        if bank == "All":
-            missing.append("audit.OPN*")
-        else:
-            missing.append(f"audit.{BANK_AUDIT_CODES[bank][:-2]}##*")
-    if missing:
-        raise ValueError(
-            f"Missing UAT source file(s) for {selected_date}: {', '.join(missing)}"
-        )
     return target_dir
 
 
@@ -271,9 +246,9 @@ def execute_gui_export(
             Path(source_log).parent if environment == SOURCE_LOG_FOLDER else Path(source_log)
         )
         local_logs = list_local_logs(source_folder)
-        if not local_logs:
+        if not local_logs and environment != SOURCE_SSH_UAT:
             raise ValueError(f"No tango.log files found in {source_folder}.")
-        local_tango_log = Path(local_logs[0])
+        local_tango_log = Path(local_logs[0]) if local_logs else None
         source_audits = list_local_audits(source_folder, selected_date, bank)
         has_ptms = any(path.name.startswith("audit.PTMS") for path in source_audits)
         has_opn = any(
@@ -282,7 +257,7 @@ def execute_gui_export(
             and bank_audit_code_matches(bank, path.name.split(".")[1])
             for path in source_audits
         )
-        if not has_ptms or not has_opn:
+        if environment != SOURCE_SSH_UAT and (not has_ptms or not has_opn):
             missing = []
             if not has_ptms:
                 missing.append("audit.PTMS*")

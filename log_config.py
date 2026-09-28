@@ -71,7 +71,7 @@ BANK_ACQUIRER_IDS = {
     "EURONET/OTP": {"063", "99999008036"},
     "NEXI/ALPHA": {"075"},
     "BORICA/PROCREDIT": {"077", "078", "2081", "301000", "808018"},
-    "NBG": {"011"},
+    "OPENWAY/NBG": {"011"},
     "EUROBANK": {"006"},
     "NEXI/COSMOTE": {"061"},
 }

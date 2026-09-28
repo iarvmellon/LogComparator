@@ -1390,7 +1390,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         if not bank or not folder_text:
             return
         try:
-            selected_date, _ = select_log_folder_source(Path(folder_text))
+            if environment_var.get() == SOURCE_SSH_UAT:
+                selected_date = selected_remote_log["date"]
+            else:
+                selected_date, _ = select_log_folder_source(Path(folder_text))
             audits = list_local_audits(Path(folder_text), selected_date, bank)
             if not audits:
                 return

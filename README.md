@@ -53,6 +53,11 @@ Running `main.py` without local audit arguments starts the GUI:
    OPN audit family mapped to that bank/acquirer are downloaded and extracted
    under `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`. Select `All` to download and
    extract every OPN audit file for the date.
+   Missing UAT source families are skipped: loading and export continue with
+   the available files, even when PTMS, the selected bank OPN audit, or Tango
+   is absent. The selected calendar date is used for loading transactions.
+   If no UAT source files are found at all, the application reports that fact.
+   Results contain only the data available in the downloaded files.
    The extracted folder path is written into the `Log folder` field.
    Progress is shown in the bottom-right progress bar of the main window while
    files are downloaded and extracted.
