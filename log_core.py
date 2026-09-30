@@ -130,6 +130,7 @@ class BlockMeta:
     currencies: list[str]
     acquirer_ids: set[str]
     identifiers: set[tuple[str, str]]
+    network_management_codes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -143,6 +144,8 @@ class Transaction:
     rrns: list[str] = field(default_factory=list)
     processing_codes: list[str] = field(default_factory=list)
     message_types: list[str] = field(default_factory=list)
+    operation_flows: dict[str, tuple[datetime, int]] = field(default_factory=dict)
+    network_management_codes: set[str] = field(default_factory=set)
     process_names: set[str] = field(default_factory=set)
     iso_response_codes: list[str] = field(default_factory=list)
     spdh_response_codes: list[str] = field(default_factory=list)
@@ -161,6 +164,20 @@ class Transaction:
         if block.is_request and block.timestamp is not None:
             if self.request_timestamp is None or block.timestamp < self.request_timestamp:
                 self.request_timestamp = block.timestamp
+        # Internal actions must not imply an external operation response.
+        if block.process_name.upper().startswith(("OPN", "PTMS")):
+            flow = re.match(r"^(request|response)\b", block.flow_type.strip(), re.IGNORECASE)
+            if flow:
+                protocol = "SPDH" if block.process_name.upper().startswith("PTMS") else "ISO"
+                phase = f"{protocol}:{flow.group(1).lower()}"
+                position = (block.timestamp or datetime.max, block.index)
+                if phase not in self.operation_flows or position < self.operation_flows[phase]:
+                    self.operation_flows[phase] = position
+        if (
+            block.process_name.upper().startswith("OPN")
+            and {"0800", "0810"}.intersection(block.mti_values)
+        ):
+            self.network_management_codes.update(block.network_management_codes)
         self.mtis.extend(block.mti_values)
         if block.is_request:
             self.request_mtis.extend(block.mti_values)
@@ -357,6 +374,30 @@ def parse_timestamp(text: str) -> datetime | None:
         return None
 
 
+
+NETWORK_CODE_NAMES = (
+    "de070", "de70", "de_070", "de_70", "networkmanagementinformationcode",
+    "networkmanagementinfocode", "networkmgmtinfocode", "networkmgmtcode",
+    "networkmanagementcode", "netmanagementcode", "netmgmtcode",
+)
+NETWORK_CODE_AUDIT_RE = re.compile(
+    r"^\s*(?:0?70\.\s*[^:\r\n]+|(?:" + "|".join(NETWORK_CODE_NAMES)
+    + r"))\s*:\s*(?:(?:asc|int)<\s*(\d{1,3})\s*>|(\d{1,3})\s*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+NETWORK_CODE_XML_RE = re.compile(
+    r"<field\b[^>]*\bname=['\"](?:" + "|".join(NETWORK_CODE_NAMES)
+    + r")[ '\"][^>]*>\s*(\d{1,3})\s*</field>",
+    re.IGNORECASE,
+)
+
+
+def parse_network_management_codes(text: str) -> list[str]:
+    values = [a or b for a, b in NETWORK_CODE_AUDIT_RE.findall(text)]
+    values.extend(NETWORK_CODE_XML_RE.findall(text))
+    return unique_nonempty(value.zfill(3) for value in values)
+
+
 def parse_block(text: str, index: int) -> BlockMeta:
     fields: dict[str, list[str]] = defaultdict(list)
     for match in FIELD_RE.finditer(text):
@@ -515,6 +556,7 @@ def parse_block(text: str, index: int) -> BlockMeta:
         currencies=currencies,
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
+        network_management_codes=parse_network_management_codes(text),
     )
 
 
@@ -754,6 +796,7 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         currencies=currencies,
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
+        network_management_codes=parse_network_management_codes(text),
     )
 
 
@@ -780,13 +823,57 @@ def select_iso_mti(transaction: Transaction) -> str:
     return candidates[0] if candidates else "UNKNOWN_MTI"
 
 
-def select_transaction_type(transaction: Transaction) -> str:
+def select_transaction_operation(transaction: Transaction) -> str:
+    # DE070 on an OPN network-management block is more specific than an
+    # internal MTI or a generic Message type description.
+    codes = transaction.network_management_codes
+    if codes == {"001"}:
+        return "Logon"
+    if codes == {"301"}:
+        return "Echo_Test"
     mti = select_iso_mti(transaction)
     if mti in TANGO_TRANSACTION_MTI_NAMES:
         return TANGO_TRANSACTION_MTI_NAMES[mti]
+    # An ISO 0800/0810 alone does not distinguish DCC, logon and echo.
+    # Use explicit operation descriptions before the generic ISO fallback.
+    descriptions = " ".join(transaction.message_types)
+    if re.search(r"\bDCC[ _-]+Inquiry\b", descriptions, re.IGNORECASE):
+        return "DCC_Inquiry"
+    if re.search(r"\becho\b", descriptions, re.IGNORECASE):
+        return "Echo_Test"
+    if re.search(r"\b(?:log[ -]?on|sign[ -]?on)\b", descriptions, re.IGNORECASE):
+        return "Logon"
+    for candidate in transaction.request_mtis + transaction.mtis:
+        if candidate in {"0860", "0861", "7080", "9081"}:
+            return MTI_NAMES[candidate]
     if mti in MTI_NAMES:
         return MTI_NAMES[mti]
     return "Unknown"
+
+
+
+def select_transaction_type(transaction: Transaction) -> str:
+    operation = select_transaction_operation(transaction)
+    label = {
+        "Logon": "LOGON",
+        "Sign-on_Request": "LOGON",
+        "Sign-on_Response": "LOGON",
+        "Echo_Test": "ECHO",
+        "Echo_Test_Request": "ECHO",
+        "Echo_Test_Response": "ECHO",
+        "DCC_Inquiry": "DCC Inquiry",
+    }.get(operation)
+    if label is None:
+        # The observed flow determines the phase, not the MTI name.
+        label = re.sub(r"_(?:Request|Response)$", "", operation)
+    phase_labels = {
+        "SPDH:request": "SPDHreq", "SPDH:response": "SPDHresp",
+        "ISO:request": "ISOreq", "ISO:response": "ISOresp",
+    }
+    phases = [phase_labels[phase] for phase in sorted(
+        transaction.operation_flows, key=transaction.operation_flows.__getitem__
+    )]
+    return label + (" (" + "-".join(phases) + ")" if phases else "")
 
 
 def select_rrn(transaction: Transaction) -> str:

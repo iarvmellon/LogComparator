@@ -54,7 +54,7 @@ BANK_AUDIT_CODES = {
     "EURONET/OTP": "OPNRENOTP01",
     "NEXI/ALPHA": "OPNBISOA01",
     "BORICA/PROCREDIT": "OPNWAY4B01",
-    "NBG": "OPNWAY4N01",
+    "OPENWAY/NBG": "OPNWAY4N01",
     "EUROBANK": "OPNBISOE01",
     "NEXI/COSMOTE": "OPNBISOC01",
 }
@@ -117,7 +117,7 @@ MTI_NAMES = {
     "0541": "File_Update_Notification_Ack",
     "0560": "Settlement_Request",
     "0570": "Settlement_Response",
-    "0800": "Logon",
+    "0800": "Network_Management_Request",
     "0810": "Network_Management_Response",
     "0820": "Network_Management_Advice",
     "0830": "Network_Management_Advice_Response",
@@ -158,6 +158,7 @@ MTI_NAMES = {
 }
 
 TANGO_TRANSACTION_MTI_NAMES = {
+    "4820": "DCC_Inquiry",
     "4013": "Pre-auth_Request",
     "8707": "Pre-auth_Request_Reversal",
     "4530": "Purchase",

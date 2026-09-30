@@ -14,6 +14,7 @@ from typing import Callable
 from tkcalendar import Calendar, DateEntry
 
 from gui_services import (
+    download_remaining_uat_audits,
     download_uat_sources,
     execute_gui_export,
     find_notepad_plus_plus,
@@ -94,6 +95,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     include_network_to_tango_var = tk.BooleanVar(root, value=True)
     selected_date_var = tk.StringVar(root, value="Not selected")
     status_var = tk.StringVar(root, value="")
+    background_status_var = tk.StringVar(root, value="")
+    background_download = {"cancel": threading.Event()}
     inline_progress_var = tk.DoubleVar(root, value=0.0)
     inline_progress_text_var = tk.StringVar(root, value="")
     transaction_rows: list[tuple[str, tuple[str, ...]]] = []
@@ -123,6 +126,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     generated_menu = tk.Menu(file_menu, tearoff=0)
 
     def clear_selected_remote_date() -> None:
+        background_download["cancel"].set()
+        background_status_var.set("")
         selected_remote_log.clear()
         selected_date_var.set("Not selected")
 
@@ -622,6 +627,48 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             return None
         return result["date"], result["path"], result["bank"]
 
+    def start_background_audits(selected_date, uat_folder, selected_bank, ready_names) -> None:
+        background_download["cancel"].set()
+        cancel = threading.Event()
+        background_download["cancel"] = cancel
+        results = queue.Queue()
+        background_status_var.set("Downloading audits for all banks in background...")
+
+        def worker():
+            try:
+                download_remaining_uat_audits(
+                    selected_date, uat_folder, ready_names,
+                    progress_callback=lambda message: results.put(("progress", message)),
+                    cancel_event=cancel,
+                )
+            except Exception as exc:
+                results.put(("error", str(exc)))
+            else:
+                results.put(("done", "Background audits ready for all banks"))
+
+        def poll():
+            if cancel.is_set():
+                return
+            finished = False
+            while True:
+                try:
+                    status, message = results.get_nowait()
+                except queue.Empty:
+                    break
+                background_status_var.set(message)
+                if status != "progress":
+                    finished = True
+                    if status == "error":
+                        background_status_var.set(f"Background download failed: {message}")
+                    if (folder_var.get() == str(uat_folder)
+                            and bank_var.get() and bank_var.get() != selected_bank):
+                        load_transaction_list()
+            if not finished:
+                root.after(100, poll)
+
+        threading.Thread(target=worker, daemon=True).start()
+        root.after(100, poll)
+
     def select_ssh_date() -> None:
         def update_progress(current: int, total: int, message: str) -> None:
             percent = (current / total) * 100 if total else 0
@@ -639,16 +686,20 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             if selected is None:
                 return
             selected_date, selected_path, selected_bank = selected
+            background_download["cancel"].set()
+            background_status_var.set("")
             status_var.set(
                 f"Downloading UAT sources for {selected_bank} on {selected_date}..."
             )
             show_inline_progress("Preparing download...", 0)
             root.update_idletasks()
+            ready_names: set[str] = set()
             uat_folder = download_uat_sources(
                 selected_date,
                 selected_bank,
-                base_output,
+                current_base_output["path"],
                 progress_callback=update_progress,
+                ready_names=ready_names,
             )
             show_inline_progress("UAT sources ready", 100)
             selected_remote_log["date"] = selected_date
@@ -669,6 +720,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             update_bank_state(selected_bank)
             if selected_bank != "All":
                 load_transaction_list()
+                start_background_audits(selected_date, uat_folder, selected_bank, ready_names)
             status_var.set(f"UAT sources ready: {uat_folder}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
             messagebox.showerror("Select date failed", str(exc))
@@ -692,7 +744,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     rrn_validate = max_length_validator(12)
     authcode_validate = max_length_validator(6)
     sequence_number_validate = max_length_validator(32)
-    transaction_type_validate = max_length_validator(20)
+    transaction_type_validate = max_length_validator(40)
     response_code_validate = max_length_validator(6)
     amount_validate = max_length_validator(8)
 
@@ -1493,6 +1545,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     ):
         filter_var.trace_add("write", schedule_transaction_filters)
 
+    tk.Label(root, textvariable=background_status_var, anchor="w").pack(
+        fill=tk.X, padx=12,
+    )
     bottom_bar = tk.Frame(root)
     bottom_bar.pack(fill=tk.X, padx=12, pady=(0, 8))
     tk.Label(bottom_bar, textvariable=status_var, anchor="w").pack(

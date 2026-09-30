@@ -133,7 +133,18 @@ The source is selected as follows:
   folder directly. Files may be plain text, `.gz`, or `.gzip`; compressed files
   are extracted there before transactions are scanned. No import copy is made.
 - `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
-  all UAT source files for that day into `LogComparator\<YYYY-MM-DD>_UAT`.
+  the selected bank's sources first into `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`.
+  Its transactions load immediately while a background worker downloads and
+  extracts the remaining PTMS and OPN audit files for all banks on the same date
+  into that folder. A separate status line shows background progress or errors.
+  Completed files become available when switching banks; if another bank is
+  selected during the download, its transaction list reloads when the worker finishes.
+  The worker reuses the sources prepared for the selected bank and existing files
+  for historical dates. Other files for today's date are refreshed. Downloads and
+  extraction use a temporary directory so partial files are not scanned or exported.
+  Changing the SSH date/bank selection or leaving the source cancels the previous
+  background job after its current transfer. Selecting `All` downloads all sources
+  in the initial download step.
 
 Imported `.gz` and `.gzip` files are extracted inside the selected folder.
 The scanner then reads the plain decompressed files, not the compressed files. During
@@ -216,7 +227,7 @@ the final `NEXI/COSMOTE` entry after `All` in the SSH/SCP dialog.
 | EURONET/OTP | OPNRENOTP01 family, for example OPNRENOTP01 and OPNRENOTP02 |
 | NEXI/ALPHA | OPNBISOA01 |
 | BORICA/PROCREDIT | OPNWAY4B01 |
-| NBG | OPNWAY4N01 |
+| OPENWAY/NBG | OPNWAY4N01 |
 | EUROBANK | OPNBISOE01 |
 | NEXI/COSMOTE | OPNBISOC01 |
 
@@ -337,8 +348,13 @@ AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
 table. `Sequence_Number` is read from audit values such as
 `[0x1C68] Sequence_Number : asc<0010090800>`.
 `TransactionType` is resolved from the current TANGO/ISO MTI and displays
-`Unknown` when the MTI is missing or unrecognized. MTI `0800` is displayed
-as `Logon`.
+`Unknown` when the MTI is missing or unrecognized. TANGO `4820` is
+`DCC Inquiry`, including BKT/BKTKOS flows whose ISO message is `0800`/`0810`.
+Processing code `910000` alone does not identify DCC and must not override
+LOGON/ECHO evidence. Explicit message
+descriptions distinguish `LOGON` and `ECHO`; configured echo MTIs are
+also recognized. An otherwise unclassified `0800` is
+`Network_Management_Request`, never automatically `Logon`.
 Processing codes such as `000000` are not transaction names and are never
 displayed as synthetic `ProcessingCode_...` types. The current MTI takes priority
 over `originMti`/`tgOriginMti`; for example, a `4554` referencing an original
@@ -672,7 +688,7 @@ When no business TANGO MTI exists, the ISO MTI description is used, for example:
 - `0210 -> Financial_Response`
 - `0400 -> Reversal_Request`
 - `0420 -> Reversal_Advice`
-- `0800 -> Logon`
+- `0800 -> Network_Management_Request` (unless operation details identify DCC, Logon or Echo)
 
 ## Response codes
 
@@ -921,3 +937,26 @@ the selected date again.
 | `requirements.txt` | Python dependency pins |
 | `README.md` | Project behavior and operational documentation |
 | `AGENTS.md` | Repository-specific development instructions |
+
+All transaction labels (including Purchase, Refund, Reversal, LOGON, ECHO
+and DCC Inquiry) include the observed external audit flow phases per protocol:
+`SPDHreq` / `SPDHresp` for SPDH (PTMS) request / response and
+`ISOreq` / `ISOresp` for ISO (OPN) request / response.
+For example, a purchase with both protocols and both phases is
+`Purchase (SPDHreq-ISOreq-ISOresp-SPDHresp)`; an ISO request alone is `Purchase (ISOreq)`.
+Only observed phases are included, grouped in parentheses in their first occurrence
+order in the exported file (timestamp, then source block order). Repeated phases
+appear once. Internal action
+responses do not add a response phase.
+Existing trailing `_Request`/`_Response` in MTI names is replaced by the
+observed phase to avoid duplicate labels. If no external flow phase is known,
+only the operation name is shown.
+
+For OPN ISO `0800`/`0810` blocks, DE070 (Network Management Information
+Code) identifies `001` as LOGON and `301` as ECHO. This field takes priority
+over generic/internal MTI descriptions, including `4820`. Both the transaction
+list and export parsers read numbered `70.` audit fields, `DE070`/`DE70`,
+and named network-management code fields (audit or XML). Missing or unknown
+DE070 values do not automatically imply LOGON or ECHO. Request/response
+suffixes still come from observed external audit blocks.
+Reference: [jPOS LogonManager](https://fw.jpos.org/docs/tutorial/logon-manager/).

@@ -4,6 +4,7 @@ import ctypes
 import os
 import shutil
 import subprocess
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -52,6 +53,7 @@ def download_uat_sources(
     bank: str,
     output_root: Path,
     progress_callback=None,
+    ready_names: set[str] | None = None,
 ) -> Path:
     target_dir = output_root / f"{selected_date}_UAT" / bank_directory_name(bank)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +99,8 @@ def download_uat_sources(
         else:
             report(f"Extracting: {path.name}")
         decompress_file(path, overwrite=force_refresh)
+        if ready_names is not None:
+            ready_names.add(path.name)
         current_step += 1
         if extracted_file_already_exists:
             report(f"Existing extracted file ready: {extracted_path.name}")
@@ -122,6 +126,57 @@ def list_remote_audits(selected_date: str, bank: str) -> list[str]:
     output = run_remote_command(command, sudo=True)
     paths = [line.strip() for line in output.splitlines() if line.strip()]
     return list(dict.fromkeys(paths))
+
+
+def download_remaining_uat_audits(
+    selected_date: str,
+    target_dir: Path,
+    ready_names: set[str],
+    progress_callback=None,
+    cancel_event=None,
+) -> None:
+    """Publish complete audit files without modifying the foreground sources."""
+    def cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    if cancelled():
+        return
+    remote_paths = [
+        path for path in list_remote_uat_sources(selected_date, "All")
+        if Path(path).name.startswith(("audit.PTMS", "audit.OPN"))
+    ]
+    force_refresh = selected_date == date.today().isoformat()
+    errors = []
+    for index, remote_path in enumerate(remote_paths, start=1):
+        if cancelled():
+            return
+        name = Path(remote_path).name
+        local_path = target_dir / name
+        extracted_path = local_path.with_suffix("") if is_gzip_file(local_path) else local_path
+        if name in ready_names and extracted_path.is_file():
+            continue
+        if progress_callback:
+            progress_callback(f"Background audits {index}/{len(remote_paths)}: {name}")
+        try:
+            # Staging also keeps incomplete files out of bank scans and exports.
+            with tempfile.TemporaryDirectory(prefix=".uat-", dir=target_dir) as staging:
+                staging_dir = Path(staging)
+                if local_path.is_file() and not force_refresh:
+                    if extracted_path.is_file():
+                        continue
+                    staged = cache_local_file(local_path, staging_dir)
+                else:
+                    staged = download_remote_file(remote_path, staging_dir)
+                extracted = decompress_file(staged)
+                if cancelled():
+                    return
+                if extracted != staged:
+                    extracted.replace(extracted_path)
+                staged.replace(local_path)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
+            errors.append(f"{name}: {exc}")
+    if errors:
+        raise RuntimeError("Some background audit downloads failed: " + "; ".join(errors))
 
 
 def bank_directory_name(bank: str) -> str:
