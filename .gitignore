@@ -1,5 +1,4 @@
 *.spec
 build/
-dist/
 __pycache__/
 build_info.py

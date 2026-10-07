@@ -104,7 +104,14 @@ def check_original_transactions(
                 if key == 'rrn' and not use_rrn:
                     continue
                 if v.get(ref) and original.values.get(key) and v[ref] != original.values[key]:
-                    mismatches.append(f'{ref}: referenced={v[ref]}, observed={original.values[key]}')
+                    detail = f'{ref}: referenced={v[ref]}, observed={original.values[key]}'
+                    if (ref == 'original_mti' and message.process.upper().startswith('OPNWAY4N')
+                            and v.get('mti') == '0420' and v[ref] == '0200'
+                            and original.values[key] == '0100'):
+                        warnings.append('original transaction mismatch (' + detail
+                                        + ', verify NBG mapping)')
+                    else:
+                        mismatches.append(detail)
             if mismatches:
                 errors.append('original transaction mismatch (' + ', '.join(mismatches) + ')')
         results[uid] = (list(dict.fromkeys(errors)), list(dict.fromkeys(warnings)))

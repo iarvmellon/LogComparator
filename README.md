@@ -146,6 +146,10 @@ ambiguous originals are warnings because the loaded log may be incomplete.
 
 Original-transaction mismatches include the exact field and the referenced/
 observed values, for example `original_mti: referenced=0200, observed=0100`.
+For NBG/OPENWAY (`OPNWAY4N*`), a `0420` void/reversal referencing original
+MTI `0200` when the original request was `0100` is a yellow warning pending
+verification of the NBG mapping. This finding alone does not make the row red.
+Other original-reference mismatches and other banks retain their existing severity.
 SPDH `Invoice_OriginTransSeqNo` is recognized as an original sequence reference.
 Explicit ISO DE4/7/11/49/90 `hex<...>` values are decoded as packed decimal only
 when they contain decimal digits with the exact expected byte width (and a zero

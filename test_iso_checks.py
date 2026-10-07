@@ -156,6 +156,20 @@ class IsoCheckTests(unittest.TestCase):
         self.assertEqual(problem_row_tag('warning: missing response code', 'Approved(000)', 'Approved(00)'), 'warning')
         self.assertEqual(problem_row_tag('currency mismatch; warning: missing response code', '', ''), 'problem')
 
+    def test_nbg_void_original_mti_is_warning_without_hiding_other_errors(self):
+        for process in ('OPNWAY4N01', 'OPNWAY4N02', 'OPNWAY4B01'):
+            original = message('request', mti='0100')
+            void = message('request', mti='0420', original_stan='1', original_mti='0200')
+            original.process = void.process = process
+            transactions = [('a', [original], False), ('b', [void], True)]
+            errors, warnings = check_original_transactions(transactions)['b']
+            text = '; '.join(errors + ['warning: ' + w for w in warnings])
+            self.assertEqual(problem_row_tag(text, 'Approved(000)', 'Approved(00)'),
+                             'warning' if process.startswith('OPNWAY4N') else 'problem')
+            void.values['tid'] = 'OTHER'
+            errors, warnings = check_original_transactions(transactions)['b']
+            self.assertTrue(any('TID:' in error for error in errors))
+
 
 if __name__ == '__main__':
     unittest.main()
