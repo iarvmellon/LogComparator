@@ -88,6 +88,112 @@ decodes only blocks containing a transaction ID and retains transaction metadata
 instead of caching full multi-gigabyte file contents, substantially reducing RAM
 usage and initial loading time.
 
+The transaction list has separate `ISO possible problem` and
+`SPDH possible problem` columns. When request and
+response RRN values differ within the same OPN process, `ISO possible problem` displays
+`differentRRN on the same transaction` and the entire row has a red background, overriding the green
+approved highlighting. No RRN mismatch is reported when the RRNs match or either
+side has no RRN available. Different processes are checked independently.
+If an RRN occurs in different ISO transactions in the loaded audit dataset, all
+affected rows show `RRN identical with other transaction` and turn red.
+Reversal and void transactions are allowed to reuse an RRN and are excluded
+from this duplicate check. Other transactions sharing that RRN with each other
+are still flagged. The request/response RRN check also applies to reversals and voids.
+RRN checks use ISO messages only; PTMS/SPDH RRNs are ignored for comparisons,
+duplicate detection, and original-transaction lookup. SPDH original lookup uses
+explicit original STAN or terminal/sequence references instead.
+This checks all observed ISO RRNs, including response values, before bank and
+table filters. Repeated occurrences within one transaction are not duplicates.
+When both problems apply, both messages appear in the corresponding protocol column.
+
+Diagnostic rules are separate from the GUI and core log parser:
+
+- `iso_checks.py`: ISO field extraction and checks.
+- `spdh_checks.py`: SPDH field extraction and checks.
+- `tango_checks.py`: streaming Tango diagnostic detection and exact transaction matching.
+- `transaction_checks.py`: RRN checks and orchestration of the two protocol columns.
+- `diagnostic_common.py`: shared metadata, comparisons, original lookup, and row severity.
+
+Additional ISO checks run on decoded OPN request/response records in both parsers.
+They compare messages within the same transaction and OPN process, using known
+ISO MTI pairs and STAN to distinguish multiple exchanges. Internal and SPDH
+records do not participate in these ISO checks. Original STAN fields are kept
+separate from the current STAN. Numeric padding is ignored for STAN, amount,
+and currency comparisons; absent fields are not treated as different values.
+
+| Finding in `ISO possible problem` | Highlight |
+| --- | --- |
+| `different STAN on the same transaction` | Red |
+| `currency mismatch` | Red |
+| `terminal or merchant mismatch` | Red |
+| `unexpected response MTI` for a supported ISO pair | Red |
+| `conflicting responses` with different response codes for the same MTI/STAN/process | Red |
+| `original transaction mismatch` for a uniquely identified reversal/void original | Red |
+| `invalid ISO message format (...)` for invalid decoded numeric DE4/11/49/90 or bitmap syntax | Red |
+| `warning: amount mismatch (check partial approval/adjustment)` | Yellow |
+| `warning: missing response code` for a supported response MTI | Yellow |
+| Missing ISO request/response or original transaction | Yellow |
+| Missing original reference or ambiguous pairing | Yellow |
+
+Findings are combined within their protocol column. Red takes precedence over yellow,
+and both take precedence over approved green. Declines alone are not flagged.
+Original-transaction lookup uses DE90/original STAN when available, otherwise
+original/current RRN, within the same OPN process across the loaded dataset.
+DE90's timestamp is used to distinguish reused STANs when original DE7 is present.
+Original MTI, explicit original RRN, terminal, merchant, and currency are compared
+only when present. Partial reversals do not require equal amounts. Missing or
+ambiguous originals are warnings because the loaded log may be incomplete.
+
+Original-transaction mismatches include the exact field and the referenced/
+observed values, for example `original_mti: referenced=0200, observed=0100`.
+SPDH `Invoice_OriginTransSeqNo` is recognized as an original sequence reference.
+Explicit ISO DE4/7/11/49/90 `hex<...>` values are decoded as packed decimal only
+when they contain decimal digits with the exact expected byte width (and a zero
+padding nibble for odd-width fields). Other hexadecimal encodings are skipped.
+
+These checks do not implement a bank-specific wire decoder: raw hexadecimal
+payloads, binary encodings, bitmap-to-payload consistency, and LLVAR/LLLVAR
+length prefixes cannot be certified from decoded audit fields. Format checks
+cover explicitly numbered decoded fields (including `DE011` and XML forms)
+and logged hexadecimal/binary bitmaps. Integer renderings may omit leading
+zeros. Proprietary MTI pairings are not guessed. Amount changes and missing
+response codes remain warnings until bank-specific approval/required-field
+rules are available.
+
+ISO numbered fields are distinguished from deeper numbered EMV components;
+an EMV component numbered 4 is not treated as ISO DE4.
+
+SPDH checks use decoded PTMS field names, not ISO DE numbers. They check echoed
+transmission number (`xchgId`), terminal/merchant, currency, STAN when available,
+message class/subclass, and transaction code. Conflicting response codes for
+the same observed message identity and malformed numeric transmission number,
+transaction code, or response code are red findings. Missing response/code,
+amount changes, and sequence/batch/shift differences are warnings. Sequence
+changes can be legitimate resynchronization; retransmissions alone are not
+errors. Original lookup additionally supports `originTransSeqNo` with terminal
+identity. No raw SPDH decoding or mandatory optional-field assumptions are made.
+The echo and resynchronization behavior is based on the
+[ACI Standard POS Device Message Specifications R6.0v10](https://www.pors-sw.cz/stazeni/pos/instalace/terminaly/CSOB/aci_spdh_msg_specs_r6v10_0611.pdf).
+
+Daily `tango.log` files (plain or gzip) are scanned in the background when the
+transaction list loads. Explicit missing-field diagnostics include the field
+name/number when logged; MAC verification failures, HSM failures, and communication
+timeouts are also recognized. Only exact `transUId` references or the structured
+Tango transaction-ID column are matched. Lines without a known transaction ID
+are not assigned using timestamps or neighboring lines. OPN/ISO and PTMS/SPDH
+messages go to their corresponding column. Unattributed protocol messages appear
+in both columns explicitly labeled `Tango (protocol unspecified)`; this is one
+shared diagnostic, not evidence of two separate failures. Optional missing fields
+and communication timeouts are warnings. Repeated identical diagnostics are
+deduplicated, and full raw log lines or payment payloads are not copied into the
+columns. Changes to Tango log size/mtime invalidate the GUI row cache, and an
+extracted log is preferred over its gzip copy.
+
+Further candidate checks require bank/routing rules and sufficient flow evidence:
+an ISO approval not delivered to the POS, a failed/missing compensating reversal,
+or multiple approvals for the same business transaction. An RRN collision alone
+does not prove duplicate charging.
+
 Use **Help > About** to view the release tag, `git describe` build identifier,
 exact Git hash, source state, and author (`IARV`). A value such as
 `v1.0.21-3-gaadf381c63e5-dirty` identifies the nearest release, commit distance,
@@ -97,12 +203,17 @@ entirely from annotated Git tags; there is no pre-commit version counter.
 Git, while source runs without it use an `untagged/development-unbuilt`
 fallback.
 
-Create a correctly identified executable with:
+After every change, rebuild the executable from the project root with:
 
 ```powershell
 .\.venv\Scripts\python.exe update_build_info.py
-pyinstaller --onefile --name LogComparator main.py
+.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator main.py
 ```
+
+The latest executable must always be stored inside the project at
+`dist\LogComparator.exe`. The Desktop shortcut points to this fixed path,
+so each rebuild updates the version it opens. Reopen any running instance
+to use the rebuilt version.
 
 Create a release tag only after committing the release source:
 

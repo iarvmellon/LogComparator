@@ -18,11 +18,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Iterator, TextIO
+from typing import Callable, Iterable, Iterator, TextIO
 
 from tkcalendar import Calendar
 
 from log_config import *
+from iso_checks import IsoMessage, parse_iso_message
+from spdh_checks import parse_spdh_message
+from diagnostic_common import AuditMessage, problem_row_tag
+from transaction_checks import (transactions_with_shared_rrns, original_transaction_problems,
+                                select_possible_problem)
 
 FIELD_RE = re.compile(
     r"<field\b[^>]*\bname=['\"](?P<name>[^'\"]+)['\"][^>]*>(?P<value>.*?)</field>",
@@ -131,6 +136,8 @@ class BlockMeta:
     acquirer_ids: set[str]
     identifiers: set[tuple[str, str]]
     network_management_codes: list[str] = field(default_factory=list)
+    iso_message: IsoMessage | None = None
+    spdh_message: AuditMessage | None = None
 
 
 @dataclass
@@ -142,6 +149,9 @@ class Transaction:
     mtis: list[str] = field(default_factory=list)
     request_mtis: list[str] = field(default_factory=list)
     rrns: list[str] = field(default_factory=list)
+    rrns_by_flow: dict[str, dict[str, set[str]]] = field(default_factory=dict)
+    iso_messages: list[IsoMessage] = field(default_factory=list)
+    spdh_messages: list[AuditMessage] = field(default_factory=list)
     processing_codes: list[str] = field(default_factory=list)
     message_types: list[str] = field(default_factory=list)
     operation_flows: dict[str, tuple[datetime, int]] = field(default_factory=dict)
@@ -157,6 +167,10 @@ class Transaction:
     identifiers: set[tuple[str, str]] = field(default_factory=set)
 
     def add(self, block: BlockMeta) -> None:
+        if block.iso_message is not None:
+            self.iso_messages.append(block.iso_message)
+        if block.spdh_message is not None:
+            self.spdh_messages.append(block.spdh_message)
         if self.first_timestamp is None or (
             block.timestamp is not None and block.timestamp < self.first_timestamp
         ):
@@ -168,6 +182,11 @@ class Transaction:
         if block.process_name.upper().startswith(("OPN", "PTMS")):
             flow = re.match(r"^(request|response)\b", block.flow_type.strip(), re.IGNORECASE)
             if flow:
+                rrns = self.rrns_by_flow.setdefault(block.process_name.upper(), {})
+                rrns.setdefault(flow.group(1).lower(), set()).update(
+                    value.strip() for value in block.rrn_values
+                    if value.strip() and not re.fullmatch(r"\w+<\s*>", value.strip())
+                )
                 protocol = "SPDH" if block.process_name.upper().startswith("PTMS") else "ISO"
                 phase = f"{protocol}:{flow.group(1).lower()}"
                 position = (block.timestamp or datetime.max, block.index)
@@ -557,6 +576,8 @@ def parse_block(text: str, index: int) -> BlockMeta:
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
         network_management_codes=parse_network_management_codes(text),
+        iso_message=parse_iso_message(without_raw_data_fast(text), process_name, flow_type, message_type),
+        spdh_message=parse_spdh_message(without_raw_data_fast(text), process_name, flow_type),
     )
 
 
@@ -797,6 +818,8 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         acquirer_ids=acquirer_ids,
         identifiers=identifiers,
         network_management_codes=parse_network_management_codes(text),
+        iso_message=parse_iso_message(parse_text, process_name, flow_type, message_type),
+        spdh_message=parse_spdh_message(parse_text, process_name, flow_type),
     )
 
 

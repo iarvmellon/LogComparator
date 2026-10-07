@@ -23,6 +23,8 @@ from gui_services import (
     list_remote_logs,
 )
 from log_core import *
+from transaction_checks import build_problem_columns
+from tango_checks import scan_tango_diagnostics
 
 
 def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
@@ -1003,6 +1005,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt",
         "responsecodespdh",
         "responsecodeiso",
+        "isopossibleproblem",
+        "spdhpossibleproblem",
     )
     transaction_frame = tk.Frame(root)
     transaction_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 8))
@@ -1014,6 +1018,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         selectmode="extended",
     )
     transaction_tree.tag_configure("approved", background="#c8f7c5", foreground="#000000")
+    transaction_tree.tag_configure("problem", background="#ff9999", foreground="#000000")
+    transaction_tree.tag_configure("warning", background="#fff2b3", foreground="#000000")
     column_labels = {
         "datetime": "Date/Time",
         "transuid": "transUid",
@@ -1027,6 +1033,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt": "AMT",
         "responsecodespdh": "RC_SPDH",
         "responsecodeiso": "RC_ISO",
+        "isopossibleproblem": "ISO possible problem",
+        "spdhpossibleproblem": "SPDH possible problem",
     }
     column_widths = {
         "datetime": 170,
@@ -1041,6 +1049,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt": 110,
         "responsecodespdh": 170,
         "responsecodeiso": 170,
+        "isopossibleproblem": 300,
+        "spdhpossibleproblem": 300,
     }
     def sort_transaction_tree(column: str) -> None:
         reverse = transaction_sort_state.get(column, False)
@@ -1079,7 +1089,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         return tuple(
             column
             for column in transaction_columns
-            if column == "datetime" or column_visible_vars[column].get()
+            if column in ("datetime", "isopossibleproblem", "spdhpossibleproblem") or column_visible_vars[column].get()
         )
 
     def apply_column_filter_visibility() -> None:
@@ -1246,10 +1256,12 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     tk.END,
                     iid=uid,
                     values=display_values_for_timezone(values),
-                    tags=("approved",) if (
-                        values[transaction_columns.index("responsecodespdh")] == "Approved(000)"
-                        and values[transaction_columns.index("responsecodeiso")] == "Approved(00)"
-                    ) else (),
+                    tags=tuple(filter(None, (problem_row_tag(
+                        '; '.join(values[transaction_columns.index(column)] for column in
+                                  ('isopossibleproblem', 'spdhpossibleproblem')),
+                        values[transaction_columns.index("responsecodespdh")],
+                        values[transaction_columns.index("responsecodeiso")],
+                    ),))),
                 )
                 visible_count += 1
         autosize_transaction_columns()
@@ -1320,6 +1332,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         bank: str,
         audits: list[Path],
         progress_callback: Callable[[float, str], None] | None = None,
+        tango_logs: list[Path] | None = None,
     ) -> list[tuple[str, tuple[str, ...]]]:
         def report_scan_progress(current: int, total: int, message: str) -> None:
             if progress_callback:
@@ -1338,6 +1351,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             progress_callback(85.0, "Using cached transactions")
         if progress_callback:
             progress_callback(88.0, "Build transaction list")
+        tango_findings = scan_tango_diagnostics(tango_logs or [], set(transactions), progress_callback)
+        problem_columns = build_problem_columns(transactions.values(), tango_findings)
         matching = [
             transaction
             for transaction in transactions.values()
@@ -1374,6 +1389,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     select_response_code(transaction.iso_response_codes),
                     ISO_RC_NAMES,
                 ),
+                *problem_columns[transaction.trans_uid],
             )
             rows.append((transaction.trans_uid, values))
             if progress_callback and (row_index == len(matching) or row_index % 250 == 0):
@@ -1449,7 +1465,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             audits = list_local_audits(Path(folder_text), selected_date, bank)
             if not audits:
                 return
-            cache_key = transaction_audit_cache_key(bank, selected_date, audits)
+            tango_logs = [Path(path) for path in list_local_logs(Path(folder_text))
+                          if parse_log_date(Path(path).name) == selected_date]
+            cache_key = transaction_audit_cache_key(bank, selected_date, audits + tango_logs)
         except (OSError, ValueError) as exc:
             messagebox.showerror("Transaction list failed", str(exc), parent=root)
             return
@@ -1492,7 +1510,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                 result_queue.put(("progress", (percent, message)))
 
             try:
-                rows = build_transaction_rows(bank, audits, report_progress)
+                rows = build_transaction_rows(bank, audits, report_progress, tango_logs)
             except Exception as exc:
                 result_queue.put(("error", exc))
             else:
