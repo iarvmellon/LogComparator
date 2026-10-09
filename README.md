@@ -203,15 +203,18 @@ exact Git hash, source state, and author (`IARV`). A value such as
 `v1.0.21-3-gaadf381c63e5-dirty` identifies the nearest release, commit distance,
 exact abbreviated commit, and uncommitted build changes. Versioning comes
 entirely from annotated Git tags; there is no pre-commit version counter.
-`build_info.py` is generated immediately before PyInstaller and is ignored by
-Git, while source runs without it use an `untagged/development-unbuilt`
-fallback.
+`build.json` is generated in the project root with `build_describe`,
+`release_tag`, `git_hash`, and `git_dirty`. Source runs read this JSON.
+PyInstaller embeds `build.json` using `--add-data "build.json;."`, so both
+source runs and the executable read the same JSON format. The executable needs
+no external metadata file or Git installation. `build.json` is ignored by Git. Without generated metadata,
+source runs use an `untagged/development-unbuilt` fallback.
 
 After every change, rebuild the executable from the project root with:
 
 ```powershell
 .\.venv\Scripts\python.exe update_build_info.py
-.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator main.py
+.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build.json;." main.py
 ```
 
 The latest executable must always be stored inside the project at
@@ -232,7 +235,7 @@ The script fetches tags from `origin`, creates the next annotated
 released commit reuses its annotated tag and retries its push. Tag collisions
 are retried without force-pushing or overwriting remote tags. Source changes
 must be committed; generated files under `build/` and `dist/` may remain modified.
-The script refreshes `build_info.py` after publishing. It does not push the
+The script refreshes `build.json` after publishing. It does not push the
 branch or rebuild the executable. Use the build commands above afterwards.
 
 To refresh metadata without creating or pushing a release tag, run

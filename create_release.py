@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 RELEASE = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
-GENERATED = ('build/', 'dist/', 'LogComparator.spec', 'build_info.py')
+GENERATED = ('build/', 'dist/', 'LogComparator.spec', 'build.json')
 
 
 def git(*args, check=True):

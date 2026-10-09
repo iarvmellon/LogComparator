@@ -2,15 +2,22 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 try:
-    from build_info import BUILD_DESCRIBE, GIT_DIRTY, GIT_HASH, RELEASE_TAG
-except ImportError:
-    BUILD_DESCRIBE = "development-unbuilt"
-    RELEASE_TAG = "untagged"
-    GIT_HASH = "unknown"
-    GIT_DIRTY = True
+    _build_metadata = json.loads(
+        Path(__file__).with_name("build.json").read_text(encoding="utf-8")
+    )
+    if not isinstance(_build_metadata, dict):
+        _build_metadata = {}
+except (OSError, ValueError):
+    _build_metadata = {}
+
+BUILD_DESCRIBE = _build_metadata.get("build_describe", "development-unbuilt")
+RELEASE_TAG = _build_metadata.get("release_tag", "untagged")
+GIT_HASH = _build_metadata.get("git_hash", "unknown")
+GIT_DIRTY = _build_metadata.get("git_dirty", True)
 
 
 DEFAULT_INPUT = Path(

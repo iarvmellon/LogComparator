@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-OUTPUT_PATH = PROJECT_DIR / "build_info.py"
+JSON_OUTPUT_PATH = PROJECT_DIR / "build.json"
 
 
 def git_output(*args: str) -> str:
@@ -25,13 +26,12 @@ def main() -> None:
         release_tag = git_output("describe", "--tags", "--abbrev=0")
     except subprocess.CalledProcessError:
         release_tag = "untagged"
-    OUTPUT_PATH.write_text(
-        (
-            f'BUILD_DESCRIBE = "{describe}"\n'
-            f'RELEASE_TAG = "{release_tag}"\n'
-            f'GIT_HASH = "{git_hash}"\n'
-            f'GIT_DIRTY = {dirty!r}\n'
-        ),
+    JSON_OUTPUT_PATH.write_text(
+        json.dumps(
+            dict(build_describe=describe, release_tag=release_tag,
+                 git_hash=git_hash, git_dirty=dirty),
+            indent=2,
+        ) + "\n",
         encoding="utf-8",
     )
     state = "dirty" if dirty else "clean"
