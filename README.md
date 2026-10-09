@@ -219,18 +219,26 @@ The latest executable must always be stored inside the project at
 so each rebuild updates the version it opens. Reopen any running instance
 to use the rebuilt version.
 
-Create a release tag only after committing the release source:
+Release creation follows `TangoWiresharkDisectors`: ordinary commits and branch
+pushes do not create tags. Commit the source changes, then run explicitly:
 
 ```powershell
-git tag -a v1.0.22 -m "LogComparator v1.0.22"
-git push origin v1.0.22
+.\.venv\Scripts\python.exe create_release.py
 ```
 
-Enable the tracked hook once per clone:
+The script fetches tags from `origin`, creates the next annotated
+`vMAJOR.MINOR.PATCH` tag on HEAD and pushes only that tag. The first release is
+`v1.0.0`; subsequent releases increment the highest patch version. An already
+released commit reuses its annotated tag and retries its push. Tag collisions
+are retried without force-pushing or overwriting remote tags. Source changes
+must be committed; generated files under `build/` and `dist/` may remain modified.
+The script refreshes `build_info.py` after publishing. It does not push the
+branch or rebuild the executable. Use the build commands above afterwards.
 
-```powershell
-git config core.hooksPath .githooks
-```
+To refresh metadata without creating or pushing a release tag, run
+`.\.venv\Scripts\python.exe create_release.py --update-build-info`
+or the existing `update_build_info.py` command. The executable retains its
+embedded version until rebuilt. No automatic tagging workflow is used.
 
 Progress, errors, and completion statistics are printed in the console.
 
