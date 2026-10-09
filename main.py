@@ -86,7 +86,7 @@ def main() -> int:
         raise SystemExit(f"Tango log file not found: {tango_log_path}")
 
     stats = split_audit_files(
-        input_paths,
+        input_paths, 
         output_dir,
         tango_log_path=tango_log_path,
         protocol_choice=args.protocol,
