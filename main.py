@@ -93,7 +93,7 @@ def main() -> int:
         stan=args.stan,
         rrn=args.rrn,
         authcode=args.authcode,
-        sequence_number=args.sequence_number,
+        sequence_number=args.sequence_number, 
         response_code_spdh=args.response_code_spdh, 
         response_code_iso=args.response_code_iso,
         include_byte_data=not args.exclude_byte_data,
