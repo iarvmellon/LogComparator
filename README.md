@@ -227,7 +227,9 @@ After every change, rebuild the executable from the project root with:
 ```
 
 The latest executable must always be stored inside the project at
-`dist\LogComparator.exe`. The Desktop shortcut points to this fixed path,
+`dist\LogComparator.exe`. Generated files under `dist/` are ignored and are
+not tracked by Git, so rebuilding does not leave uncommitted executable changes.
+The Desktop shortcut points to this fixed path,
 so each rebuild updates the version it opens. Reopen any running instance
 to use the rebuilt version.
 
