@@ -1,4 +1,4 @@
-"""Publish only an annotated release tag and refresh local version metadata."""
+"""Publish an annotated release tag, refresh metadata and build the executable."""
 import json
 import re
 import subprocess
@@ -71,17 +71,34 @@ def create_release():
     raise RuntimeError('Repeated release-tag collisions; rerun create_release.py')
 
 
-if __name__ == '__main__':
+def build_executable():
+    builder = ROOT / '.venv' / 'Scripts' / 'pyinstaller.exe'
+    result = subprocess.run(
+        [str(builder), '--onefile', '--name', 'LogComparator',
+         '--add-data', 'build_info.json;.', 'main.py'], cwd=ROOT)
+    if result.returncode:
+        raise RuntimeError('Executable build failed. The release tag remains published; rerun create_release.py to retry.')
+
+
+def main():
     try:
         if sys.argv[1:] == ['--update-build-info']:
             update_build_info()
-            sys.exit(0)
+            return 0
         if sys.argv[1:]:
             raise RuntimeError('Usage: create_release.py [--update-build-info]')
+        if not (ROOT / '.venv' / 'Scripts' / 'pyinstaller.exe').is_file():
+            raise RuntimeError('Project virtual environment PyInstaller is missing.')
         tag = create_release()
-        print(f'Release tag {tag} is published. No branch push or executable build was performed.')
+        print(f'Release tag {tag} is published. Building the executable...')
         update_build_info()
-        print('Local application version updated. Rebuild the executable and reopen LogComparator to load it.')
+        build_executable()
+        print(f'Release {tag} ready: {ROOT / "dist" / "LogComparator.exe"}. Reopen LogComparator to load it.')
+        return 0
     except (RuntimeError, OSError) as exc:
         print(f'Release failed: {exc}', file=sys.stderr)
-        sys.exit(1)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -210,7 +210,7 @@ entirely from annotated Git tags; there is no pre-commit version counter.
 `release_tag`, `git_hash`, and `git_dirty`. As in TangoWiresharkDisectors,
 source runs read local Git on every launch, including after a fresh clone.
 If Git is unavailable, they fall back to this JSON.
-PyInstaller embeds `build_info.json` using `--add-data "build_info.json;."`, so both
+PyInstaller embeds `build_info.json` using `--add-data "build_info.json;."`;
 the executable uses its embedded metadata. The executable needs
 no external metadata file or Git installation. `build_info.json` is ignored by Git. Without Git or generated metadata,
 source runs use an `untagged/development-unbuilt` fallback.
@@ -244,10 +244,13 @@ The script fetches tags from `origin`, creates the next annotated
 released commit reuses its annotated tag and retries its push. Tag collisions
 are retried without force-pushing or overwriting remote tags. Source changes
 must be committed; generated files under `build/` and `dist/` may remain modified.
-The script refreshes `build_info.json` after publishing. It does not push the
-branch or rebuild the executable. Use the build commands above afterwards.
+The script refreshes `build_info.json` after publishing and automatically rebuilds
+`dist/LogComparator.exe` using the project virtual environment. This single
+command creates the release and embeds its version in the executable. It does
+not push the branch. If the build fails after publication, rerun the command:
+it reuses the existing tag on that commit and retries the build.
 
-To refresh metadata without creating or pushing a release tag, run
+To refresh only metadata without creating or pushing a release tag or building, run
 `.\.venv\Scripts\python.exe create_release.py --update-build-info`
 or the existing `update_build_info.py` command. The executable retains its
 embedded version until rebuilt. No automatic tagging workflow is used.
