@@ -198,23 +198,30 @@ an ISO approval not delivered to the POS, a failed/missing compensating reversal
 or multiple approvals for the same business transaction. An RRN collision alone
 does not prove duplicate charging.
 
+The main window title displays the full build identifier.
 Use **Help > About** to view the release tag, `git describe` build identifier,
 exact Git hash, source state, and author (`IARV`). A value such as
 `v1.0.21-3-gaadf381c63e5-dirty` identifies the nearest release, commit distance,
 exact abbreviated commit, and uncommitted build changes. Versioning comes
 entirely from annotated Git tags; there is no pre-commit version counter.
-`build.json` is generated in the project root with `build_describe`,
-`release_tag`, `git_hash`, and `git_dirty`. Source runs read this JSON.
-PyInstaller embeds `build.json` using `--add-data "build.json;."`, so both
-source runs and the executable read the same JSON format. The executable needs
-no external metadata file or Git installation. `build.json` is ignored by Git. Without generated metadata,
+`build_info.json` is generated in the project root with `build_describe`,
+`release_tag`, `git_hash`, and `git_dirty`. As in TangoWiresharkDisectors,
+source runs read local Git on every launch, including after a fresh clone.
+If Git is unavailable, they fall back to this JSON.
+PyInstaller embeds `build_info.json` using `--add-data "build_info.json;."`, so both
+the executable uses its embedded metadata. The executable needs
+no external metadata file or Git installation. `build_info.json` is ignored by Git. Without Git or generated metadata,
 source runs use an `untagged/development-unbuilt` fallback.
+
+For the same single-command build workflow as the dissector, run
+`./build_executable.ps1`; it refreshes metadata without publishing a tag and
+builds with the project virtual environment.
 
 After every change, rebuild the executable from the project root with:
 
 ```powershell
 .\.venv\Scripts\python.exe update_build_info.py
-.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build.json;." main.py
+.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build_info.json;." main.py
 ```
 
 The latest executable must always be stored inside the project at
@@ -235,7 +242,7 @@ The script fetches tags from `origin`, creates the next annotated
 released commit reuses its annotated tag and retries its push. Tag collisions
 are retried without force-pushing or overwriting remote tags. Source changes
 must be committed; generated files under `build/` and `dist/` may remain modified.
-The script refreshes `build.json` after publishing. It does not push the
+The script refreshes `build_info.json` after publishing. It does not push the
 branch or rebuild the executable. Use the build commands above afterwards.
 
 To refresh metadata without creating or pushing a release tag, run

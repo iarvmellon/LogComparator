@@ -1,4 +1,4 @@
 *.spec
 build/
 __pycache__/
-build.json
+build_info.json

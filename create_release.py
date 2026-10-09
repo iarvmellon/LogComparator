@@ -1,4 +1,5 @@
-git"""Publish only an annotated release tag and refresh local version metadata."""
+"""Publish only an annotated release tag and refresh local version metadata."""
+import json
 import re
 import subprocess
 import sys
@@ -7,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 RELEASE = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
-GENERATED = ('build/', 'dist/', 'LogComparator.spec', 'build.json')
+GENERATED = ('build/', 'dist/', 'LogComparator.spec')
 
 
 def git(*args, check=True):
@@ -22,7 +23,19 @@ def git_text(*args):
     return git(*args).stdout.strip()
 
 
-from update_build_info import main as update_build_info
+def update_build_info():
+    describe = git_text('describe', '--tags', '--always', '--dirty')
+    try:
+        release = git_text('describe', '--tags', '--abbrev=0')
+    except RuntimeError:
+        release = 'untagged'
+    info = dict(build_describe=describe, release_tag=release,
+                git_hash=git_text('rev-parse', '--short=12', 'HEAD'),
+                git_dirty=describe.endswith('-dirty'))
+    folder = ROOT
+    (folder / 'build_info.json').write_text(json.dumps(info, indent=2) + '\n', encoding='utf-8')
+    print(f'Build info updated: {describe} ({release})')
+
 
 
 def key(tag):
@@ -68,7 +81,7 @@ if __name__ == '__main__':
         tag = create_release()
         print(f'Release tag {tag} is published. No branch push or executable build was performed.')
         update_build_info()
-        print('Local build metadata updated. Rebuild dist/LogComparator.exe and reopen LogComparator to load it.')
+        print('Local application version updated. Rebuild the executable and reopen LogComparator to load it.')
     except (RuntimeError, OSError) as exc:
         print(f'Release failed: {exc}', file=sys.stderr)
         sys.exit(1)

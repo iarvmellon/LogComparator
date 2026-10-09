@@ -48,7 +48,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     bool,
 ] | None:
     root = tk.Tk()
-    root.title("LogComparator")
+    root.title(f"LogComparator {APP_BUILD_DESCRIBE}")
     root.geometry("860x560")
     root.minsize(780, 520)
     style = ttk.Style(root)

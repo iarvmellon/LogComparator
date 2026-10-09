@@ -3,21 +3,49 @@
 from collections import defaultdict
 from dataclasses import dataclass
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-try:
-    _build_metadata = json.loads(
-        Path(__file__).with_name("build.json").read_text(encoding="utf-8")
-    )
-    if not isinstance(_build_metadata, dict):
-        _build_metadata = {}
-except (OSError, ValueError):
-    _build_metadata = {}
+def load_build_info():
+    folder = Path(__file__).resolve().parent
+    try:
+        info = json.loads((folder / 'build_info.json').read_text(encoding='utf-8'))
+        if not isinstance(info, dict):
+            info = {}
+    except (OSError, ValueError):
+        info = {}
+    # Packaged executables use their embedded metadata. Source checkouts read
+    # Git on every launch, including the first launch without generated files.
+    if not getattr(sys, 'frozen', False) and (folder / '.git').exists():
+        def git_value(*args):
+            result = subprocess.run(
+                ['git', *args], cwd=folder, capture_output=True,
+                text=True, encoding='utf-8', check=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            return result.stdout.strip()
 
-BUILD_DESCRIBE = _build_metadata.get("build_describe", "development-unbuilt")
-RELEASE_TAG = _build_metadata.get("release_tag", "untagged")
-GIT_HASH = _build_metadata.get("git_hash", "unknown")
-GIT_DIRTY = _build_metadata.get("git_dirty", True)
+        try:
+            describe = git_value('describe', '--tags', '--always', '--dirty')
+            commit = git_value('rev-parse', '--short=12', 'HEAD')
+            try:
+                release = git_value('describe', '--tags', '--abbrev=0')
+            except subprocess.CalledProcessError:
+                release = 'untagged'
+            info = dict(build_describe=describe, release_tag=release,
+                        git_hash=commit, git_dirty=describe.endswith('-dirty'))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return info
+
+
+_build_info = load_build_info()
+BUILD_DESCRIBE = _build_info.get('build_describe', 'untagged/development-unbuilt')
+RELEASE_TAG = _build_info.get('release_tag', 'untagged')
+GIT_HASH = _build_info.get('git_hash', 'unknown')
+GIT_DIRTY = _build_info.get('git_dirty')
+__version__ = BUILD_DESCRIBE
 
 
 DEFAULT_INPUT = Path(

@@ -3,5 +3,5 @@
 - After every change, rebuild the executable before completing the task.
 - Run from the project root using the project virtual environment:
   .\.venv\Scripts\python.exe update_build_info.py
-  .\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build.json;." main.py
+  .\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build_info.json;." main.py
 - Always publish the latest executable at <project>/dist/LogComparator.exe, inside the project. The Desktop shortcut must keep pointing to this fixed path.
