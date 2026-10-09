@@ -903,7 +903,7 @@ Without positional audit files, `main.py` opens the GUI.
 
 Requirements:
 
-- Windows with Python 3.
+- Windows with Python 3.10 or newer (including Tkinter) and Git for Windows.
 - Python packages from `requirements.txt`.
 - Notepad++ installed. It is required for the `Open` action.
 - WinMerge installed. It is required for the `Compare` action.
@@ -920,11 +920,21 @@ Setup:
 
 ```powershell
 cd C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+.\setup.ps1
 python main.py
 ```
+
+After cloning, run `setup.ps1` from the cloned project directory. It creates
+or reuses `.venv`, verifies Python and Tkinter, installs application and build
+dependencies from `requirements.txt` and `requirements-build.txt`, and generates
+`build_info.json`, then activates `.venv` in the current PowerShell session.
+It does not publish tags or build the executable. Use `./setup.ps1 -Python "C:\path\to\python.exe"`
+to choose Python when creating the environment. If PowerShell blocks scripts,
+run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and then
+`./setup.ps1` in the same PowerShell window.
+Install Notepad++, WinMerge, and EnhanceAnyLexer separately using the instructions
+below. Run `./build_executable.ps1` to build locally, or commit source changes
+and run `.\.venv\Scripts\python.exe create_release.py` to publish and build a release.
 
 ## Configuration
 
