@@ -213,7 +213,7 @@ If Git is unavailable, they fall back to this JSON.
 PyInstaller embeds `build_info.json` using `--add-data "build_info.json;."`;
 the executable uses its embedded metadata. The executable needs
 no external metadata file or Git installation. `build_info.json` is ignored by Git. Without Git or generated metadata,
-source runs use an `untagged/development-unbuilt` fallback.
+source runs use an `untagged/development-unbuilt` fallback. 
 
 For the same single-command build workflow as the dissector, run
 `./build_executable.ps1`; it refreshes metadata without publishing a tag and
