@@ -549,8 +549,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         dialog.grab_set()
 
         result: dict[str, str] = {}
-        default_date = sorted(valid_dates)[0]
-        initial = datetime.strptime(default_date, "%Y-%m-%d")
+        initial = datetime.now()
         tk.Label(dialog, text="Select a highlighted date:").pack(pady=(10, 5))
         remote_calendar = Calendar(
             dialog,

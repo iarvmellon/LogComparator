@@ -48,6 +48,8 @@ Running `main.py` without local audit arguments starts the GUI:
    the read-only `Log folder` field.
 6. For `SSH/SCP (UAT)`, a separate calendar window opens automatically after
    the remote `tango.log*` list is loaded.
+   Each time it opens, it displays the current local month and selects today.
+   Available log dates remain highlighted; select a highlighted date to continue.
 7. Select a highlighted date and a bank/acquirer in the SSH/SCP window, then
    press **OK**. Only the selected day's `tango.log*`, `audit.PTMS...`, and the
    OPN audit family mapped to that bank/acquirer are downloaded and extracted
