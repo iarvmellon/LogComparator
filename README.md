@@ -115,6 +115,40 @@ Diagnostic rules are separate from the GUI and core log parser:
 - `tango_checks.py`: streaming Tango diagnostic detection and exact transaction matching.
 - `transaction_checks.py`: RRN checks and orchestration of the two protocol columns.
 - `diagnostic_common.py`: shared metadata, comparisons, original lookup, and row severity.
+- `emv_checks.py`: shared basic EMV extraction, format checks, and completeness warnings.
+
+Basic EMV checks apply separately to ISO and SPDH messages. Explicit decoded tag
+names (for example `tag9F26`) and XML fields are supported. Named EMV components
+are recognized in ICC/EMV audit data. Explicit `hex<...>` ICC/EMV containers,
+including ISO `DE55`, are parsed as BER-TLV with constructed templates and
+long-form lengths. Proprietary SPDH fixed-layout request fields are not treated
+as TLV. Integer audit renderings and opaque binary dumps are not assigned byte
+lengths because their original encoding is unavailable.
+
+Red findings identify malformed hexadecimal values, incorrect known tag lengths,
+invalid packed-decimal values or dates, conflicting values for the same tag,
+and malformed/truncated TLV. Fixed lengths cover cryptogram, ATC, unpredictable
+number, TVR, AIP, date, transaction type, amount, currency/country, and basic
+terminal/CVM tags. IAD remains opaque and is checked only for its 1–32 byte range.
+These data-object lengths follow the
+[EMV tag reference](https://developer.cybersource.com/docs/cybs/en-us/cp-retail/integration/eftpos/rest/cp-retail/cp-pymnt-svcs-eftpos-intro/cp-retail-eftpos-emv-tags.html);
+that provider's mandatory-tag profile is not imposed on other acquirers.
+
+Yellow warnings identify missing common online EMV tags when an ISO `0100`/`0200`
+request contains decoded EMV data, or an SPDH request explicitly contains ARQC
+CID `80`. Chip entry modes `05`/`07` without decoded EMV data are also warnings.
+Missing tags are not treated as universally mandatory: acquirer requirements
+and audit completeness must be verified. Responses, ISO reversals/advice and
+network requests do not inherit the online authorization tag checklist.
+Differences between EMV amount/currency and message values are warnings,
+because mappings and surcharge/partial-approval behavior can legitimately differ.
+
+Additional basic format checks validate explicitly numbered ISO DE7 date/time
+and decoded SPDH nonnegative amount, numeric currency (up to 3 digits), and
+numeric STAN (up to 6 digits). Missing optional fields remain unflagged.
+All findings use the existing protocol columns and row colors: red for errors,
+yellow for warnings, with red taking priority. No bank-specific mandatory fields
+or cryptographic verification is assumed.
 
 Additional ISO checks run on decoded OPN request/response records in both parsers.
 They compare messages within the same transaction and OPN process, using known

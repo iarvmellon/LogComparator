@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import datetime
+from emv_checks import parse_emv, check_emv
 from diagnostic_common import (AuditMessage as IsoMessage, normalized, different,
                                problem_row_tag, check_original_transactions)
 
@@ -29,8 +31,9 @@ ALIASES = {
     'original_rrn': ('originalrrn', 'origrrn'),
     'transmission_time': ('transmissiondatetime', 'transdatetime'),
     'bitmap': ('bitmap', 'primarybitmap', 'secondarybitmap'),
+    'entry_mode': ('posentrymode', 'posentrymodecode'),
 }
-FIELD_NUMBERS = {4: 'amount', 7: 'transmission_time', 11: 'stan', 37: 'rrn', 39: 'rc',
+FIELD_NUMBERS = {4: 'amount', 7: 'transmission_time', 11: 'stan', 22: 'entry_mode', 37: 'rrn', 39: 'rc',
                  41: 'tid', 42: 'mid', 49: 'currency', 90: 'original'}
 NAME_KEYS = {alias: key for key, aliases in ALIASES.items() for alias in aliases}
 LINE_FIELD = re.compile(r'^\s*(?:(\d+)\.\s*)?([^:\r\n]+)\s*:\s*(.*?)\s*$', re.M)
@@ -74,11 +77,16 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
         priority = 3 if field_number is not None else 2 if name == 'msgid' else 1
         collected[key].append((priority, value))
         # Only explicitly numbered DEs have a reliable wire-field identity.
-        numeric_lengths = {4: 12, 11: 6, 49: 3, 90: 42}
+        numeric_lengths = {4: 12, 7: 10, 11: 6, 49: 3, 90: 42}
         length = numeric_lengths.get(field_number)
         if length and (not re.fullmatch(r'[0-9]+', value)
                        or len(value) > length or (not integer and len(value) != length)):
             message.invalid_fields.add(f'DE{field_number}')
+        if field_number == 7 and not integer and re.fullmatch(r'[0-9]{10}', value):
+            try:
+                datetime.strptime('2000' + value, '%Y%m%d%H%M%S')
+            except ValueError:
+                message.invalid_fields.add('DE7 date/time')
         if key == 'bitmap' and not (re.fullmatch(r'[0-9A-Fa-f]{16}(?:[0-9A-Fa-f]{16})?', value)
                                    or re.fullmatch(r'[01]{64}(?:[01]{64})?', value)):
             message.invalid_fields.add('bitmap')
@@ -115,6 +123,7 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
         message.values['original_mti'] = original[:4]
         message.values['original_stan'] = original[4:10]
         message.values['original_time'] = original[10:20]
+    message.emv_tags, message.emv_errors = parse_emv(text)
     return message
 
 
@@ -124,6 +133,9 @@ def check_iso_messages(messages: list[IsoMessage]) -> tuple[list[str], list[str]
     processes: dict[str, list[IsoMessage]] = defaultdict(list)
     for message in messages:
         processes[message.process].append(message)
+        emv_errors, emv_warnings = check_emv(message)
+        errors.extend(emv_errors)
+        warnings.extend(emv_warnings)
         if message.invalid_fields:
             errors.append('invalid ISO message format (' + ', '.join(sorted(message.invalid_fields)) + ')')
     for process_messages in processes.values():

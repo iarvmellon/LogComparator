@@ -12,6 +12,8 @@ class AuditMessage:
     phase: str
     values: dict[str, str] = field(default_factory=dict)
     invalid_fields: set[str] = field(default_factory=set)
+    emv_tags: dict[str, str] = field(default_factory=dict)
+    emv_errors: list[str] = field(default_factory=list)
 
 
 def normalized(key: str, value: str) -> str:

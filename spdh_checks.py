@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from emv_checks import parse_emv, check_emv
 from diagnostic_common import AuditMessage, different, normalized
 
 
@@ -26,6 +27,7 @@ ALIASES = {
     'message_subclass': ('prtclmsgsubclass',),
     'transaction_code': ('prtcltranstype',),
     'device': ('devicetype',),
+    'entry_mode': ('posentrymode', 'cardentrymode', 'posentrymodecode'),
 }
 KEYS = {name: key for key, names in ALIASES.items() for name in names}
 LINE = re.compile(r'^\s*(?:(?:\d+\.|\[[^\]]+\])\s*)?([\w -]+)\s*:\s*(.*?)\s*$', re.M)
@@ -57,6 +59,11 @@ def parse_spdh_message(text: str, process: str, flow_type: str) -> AuditMessage 
                 limit = 3 if key == 'rc' else 2
                 if not re.fullmatch(r'[0-9]{1,' + str(limit) + r'}', value):
                     message.invalid_fields.add(key)
+            if key == 'amount' and not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', value):
+                message.invalid_fields.add('amount')
+            if key in {'currency', 'stan'} and not re.fullmatch(
+                    r'[0-9]{1,' + str(3 if key == 'currency' else 6) + r'}', value):
+                message.invalid_fields.add(key)
     for key, items in candidates.items():
         rank = max(p for p, _ in items)
         values = {v for p, v in items if p == rank}
@@ -64,6 +71,7 @@ def parse_spdh_message(text: str, process: str, flow_type: str) -> AuditMessage 
             message.values[key] = values.pop()
     if message.values.get('rc', '').isdigit():
         message.values['rc'] = message.values['rc'].zfill(3)
+    message.emv_tags, message.emv_errors = parse_emv(text)
     return message
 
 
@@ -72,6 +80,9 @@ def check_spdh_messages(messages: list[AuditMessage]) -> tuple[list[str], list[s
     processes = defaultdict(list)
     for message in messages:
         processes[message.process].append(message)
+        emv_errors, emv_warnings = check_emv(message)
+        errors.extend(emv_errors)
+        warnings.extend(emv_warnings)
         if message.invalid_fields:
             errors.append('invalid SPDH message format (' + ', '.join(sorted(message.invalid_fields)) + ')')
     for group in processes.values():
