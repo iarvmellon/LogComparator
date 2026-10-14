@@ -23,7 +23,7 @@ from gui_services import (
     list_remote_logs,
 )
 from log_core import *
-from transaction_checks import build_problem_columns
+from transaction_checks import build_problem_columns, is_one_way_heartbeat
 from tango_checks import scan_tango_diagnostics
 
 
@@ -102,6 +102,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     inline_progress_var = tk.DoubleVar(root, value=0.0)
     inline_progress_text_var = tk.StringVar(root, value="")
     transaction_rows: list[tuple[str, tuple[str, ...]]] = []
+    heartbeat_uids: set[str] = set()
     transaction_sort_state: dict[str, bool] = {}
     transaction_load_cache: dict[
         tuple[str, str, tuple[tuple[str, int, int], ...]],
@@ -1260,6 +1261,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                                   ('isopossibleproblem', 'spdhpossibleproblem')),
                         values[transaction_columns.index("responsecodespdh")],
                         values[transaction_columns.index("responsecodeiso")],
+                        heartbeat=uid in heartbeat_uids,
                     ),))),
                 )
                 visible_count += 1
@@ -1358,6 +1360,11 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             if transaction_matches_bank(transaction, bank)
         ]
         matching.sort(key=lambda transaction: transaction.first_index)
+        for transaction in matching:
+            if is_one_way_heartbeat(transaction):
+                heartbeat_uids.add(transaction.trans_uid)
+            else:
+                heartbeat_uids.discard(transaction.trans_uid)
         rows: list[tuple[str, tuple[str, ...]]] = []
         total_matching = max(len(matching), 1)
         for row_index, transaction in enumerate(matching, start=1):

@@ -8,6 +8,60 @@ from diagnostic_common import problem_row_tag
 
 
 class EmvTests(unittest.TestCase):
+    def test_xml_decoded_values_and_transport_padding_are_not_wire_tags(self):
+        text = (
+            'EMV data\nterminalCountryCode : asc<008>\n'
+            "<field type='A' name='terminalCountryCode'>8</field>\n"
+            'terminalCapabilities : asc<0008C800>\n'
+            "<field type='A' name='terminalCapabilities'>0008C8</field>\n"
+            "<field type='TH' name='issuerApplicationData'>" + '30' * 64 + '</field>\n'
+            "<field type='A' name='unpredictableNumber'>8657250</field>\n"
+            'unpredictableNumber : asc<08657250>\n')
+        tags, errors = parse_emv(text)
+        self.assertEqual(tags['9F1A'], '0008')
+        self.assertEqual(tags['9F33'], '0008C8')
+        self.assertEqual(tags['9F37'], '08657250')
+        self.assertNotIn('9F10', tags)
+        self.assertEqual(check_emv(AuditMessage('OPN01', 'response', emv_tags=tags,
+                                              emv_errors=errors))[0], [])
+        tags, errors = parse_emv('tag9F33 : hex<0008C800>')
+        self.assertTrue(check_emv(AuditMessage('OPN01', 'response', emv_tags=tags))[0])
+
+    def test_ambiguous_named_values_are_not_conflicting_wire_tags(self):
+        tags, errors = parse_emv("EMV data\n<field type='A' name='terminalCapabilities'>0008C8</field>\n"
+                                 "<field type='A' name='terminalCapabilities'>0018C8</field>")
+        self.assertNotIn('9F33', tags)
+        self.assertEqual(errors, [])
+
+    def test_decoded_country_currency_omit_bcd_padding(self):
+        tags, errors = parse_emv(
+            'iccData :\nterminalCountryCode : asc<008>\n'
+            'transactionCurrencyCode : asc<978>')
+        self.assertEqual(tags, {'9F1A': '0008', '5F2A': '0978'})
+        self.assertEqual(errors, [])
+        message = AuditMessage('OPN01', 'response', emv_tags=tags)
+        self.assertEqual(check_emv(message)[0], [])
+        for text in ('tag9F1A : hex<008>', 'iccData :\nterminalCountryCode : hex<008>',
+                     'iccData :\nterminalCountryCode : asc<00A>'):
+            with self.subTest(text=text):
+                tags, errors = parse_emv(text)
+                self.assertTrue(check_emv(AuditMessage('OPN01', 'response',
+                                                     emv_tags=tags, emv_errors=errors))[0])
+
+    def test_void_reversal_refund_do_not_require_purchase_emv(self):
+        from log_core import Transaction
+        from transaction_checks import build_problem_columns
+        for mti in ['4554', '4546', '4534', '4820']:
+            message = parse_spdh_message('posEntryMode : asc<073>', 'PTMS01', 'request')
+            transaction = Transaction('test', 0, mtis=[mti], spdh_messages=[message])
+            columns = build_problem_columns([transaction])['test']
+            self.assertNotIn('chip entry mode', '; '.join(columns))
+            message.emv_tags = {'9F26': '01'}
+            self.assertIn('invalid EMV tag', '; '.join(build_problem_columns([transaction])['test']))
+        message = parse_spdh_message('posEntryMode : asc<073>', 'PTMS01', 'request')
+        transaction = Transaction('test', 0, mtis=['4530'], spdh_messages=[message])
+        self.assertIn('chip entry mode', '; '.join(build_problem_columns([transaction])['test']))
+
     def test_standard_widths_and_formats(self):
         for tag, good, bad in [('9F26', '01'*8, '01'), ('9F36', '0001', '01'),
                                ('9F37', '01020304', 'Z123'), ('95', '00'*5, '00'),

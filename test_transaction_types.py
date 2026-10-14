@@ -47,6 +47,15 @@ acqId : asc<{acquirer}>
         for transaction in self.classify("request", "910000"):
             self.assertEqual(select_transaction_type(transaction), "Network_Management (ISOreq)")
 
+    def test_bktkos_loyalty_inquiry_over_generic_iso_network_mti(self):
+        for transaction in self.classify('non financial request, MTI = 7140 - Loyalty Balance Inquiry', '890000'):
+            self.assertEqual(select_transaction_type(transaction), 'Loyalty Balance Inquiry (ISOreq)')
+            transaction.add(parse_block('Process name : OPNBISOBKT01\nFlow type : response\n'
+                                        'msgId : asc<0810>\n', 1))
+            self.assertEqual(select_transaction_type(transaction), 'Loyalty Balance Inquiry (ISOreq-ISOresp)')
+        for transaction in self.classify('request', '890000'):
+            self.assertEqual(select_transaction_type(transaction), 'Network_Management (ISOreq)')
+
     def test_explicit_network_operation(self):
         for description, expected in (("Logon request", "LOGON (ISOreq)"), ("Echo request", "ECHO (ISOreq)")):
             for transaction in self.classify(description, "910000"):
@@ -96,6 +105,8 @@ acqId : asc<{acquirer}>
                    'DE070 : asc<{code}>', 'DE070 : {code}',
                    '<field name="DE070">{code}</field>',
                    '<field name="networkManagementInformationCode">{code}</field>')
+        formats += ('networkManageCode : asc<{code}>',
+                    '<field type="A" name="networkManageCode">{code}</field>')
         for parser in (parse_block, parse_block_for_list):
             for code, label in (("001", "LOGON"), ("1", "LOGON"), ("301", "ECHO")):
                 for template in formats:
@@ -123,6 +134,17 @@ acqId : asc<{acquirer}>
             transaction = Transaction("test", 0)
             transaction.add(parser("Process name : OPNBISOBKT01\nFlow type : response\nmsgId : asc<0810>\nDE070 : asc<999>\n", 0))
             self.assertEqual(select_transaction_type(transaction), "Network_Management (ISOresp)")
+
+    def test_network_advice_and_explicit_logoff(self):
+        for parser in (parse_block, parse_block_for_list):
+            for code, label in [('001', 'LOGON'), ('301', 'ECHO')]:
+                transaction = Transaction('test', 0)
+                for index, (mti, flow) in enumerate([('0820', 'request'), ('0830', 'response')]):
+                    transaction.add(parser(f'Process name : OPN01\nFlow type : {flow}\n'
+                                           f'msgId : asc<{mti}>\nnetworkManageCode : asc<{code}>', index))
+                self.assertEqual(select_transaction_type(transaction), label + ' (ISOreq-ISOresp)')
+        for transaction in self.classify('Sign-off request'):
+            self.assertEqual(select_transaction_type(transaction), 'LOGOFF (ISOreq)')
 
     def test_purchase_with_dcc_data_stays_purchase(self):
         for transaction in self.classify("DCC Inquiry", "910000", "4530"):

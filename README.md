@@ -124,6 +124,16 @@ including ISO `DE55`, are parsed as BER-TLV with constructed templates and
 long-form lengths. Proprietary SPDH fixed-layout request fields are not treated
 as TLV. Integer audit renderings and opaque binary dumps are not assigned byte
 lengths because their original encoding is unavailable.
+Named ASCII country/currency audit fields such as `terminalCountryCode : asc<008>`
+are decoded three-digit numbers, not raw hexadecimal bytes. Their omitted BCD
+padding nibble is restored for EMV validation; raw hex tags and TLV retain
+strict byte-length checks.
+XML `type='A'` fields use the same decoded ASCII rules, including numeric country
+values with omitted leading zeros. Named binary ASCII fields are accepted only
+at their known fixed widths. Padded transport fields, variable-length named IAD,
+and XML `TH` dumps are not interpreted as raw EMV tags. Ambiguous named audit
+representations are excluded from comparisons; conflicting explicit wire tags
+still produce red findings.
 
 Red findings identify malformed hexadecimal values, incorrect known tag lengths,
 invalid packed-decimal values or dates, conflicting values for the same tag,
@@ -146,6 +156,14 @@ because mappings and surcharge/partial-approval behavior can legitimately differ
 Additional basic format checks validate explicitly numbered ISO DE7 date/time
 and decoded SPDH nonnegative amount, numeric currency (up to 3 digits), and
 numeric STAN (up to 6 digits). Missing optional fields remain unflagged.
+For CASYS, NEXI/ALPHA, BORICA/PROCREDIT and EUROBANK, an explicitly identified
+ISO Echo request is a one-way heartbeat: no response is expected. ISO network
+requests with DE70 `301` (or dedicated Echo MTIs `0860`/`7080`) do not trigger
+the missing-response warning for these process families. Transactions containing
+only these ISO requests and no SPDH messages are green when no other diagnostic
+applies. Errors and warnings still override green; Logon, payment requests and
+Echo requests for other acquirers retain their normal checks. Response codes
+remain `Unknown` when no response exists; no approval code is fabricated.
 All findings use the existing protocol columns and row colors: red for errors,
 yellow for warnings, with red taking priority. No bank-specific mandatory fields
 or cryptographic verification is assumed.
@@ -175,6 +193,12 @@ Findings are combined within their protocol column. Red takes precedence over ye
 and both take precedence over approved green. Declines alone are not flagged.
 Original-transaction lookup uses DE90/original STAN when available, otherwise
 original/current RRN, within the same OPN process across the loaded dataset.
+Explicit decoded original STAN references take priority over raw DE90 slices.
+BASE24 `retrievRefNumberOrigin`/`originMTI` fields are recognized as original
+references; when present, DE90 is not guessed to contain ISO original STAN/DE7.
+If a unique original is found, no missing-original warning is shown. Missing
+or ambiguous originals still produce warnings, and actual reference mismatches
+remain checked. The search covers all loaded transactions before table filters.
 DE90's timestamp is used to distinguish reused STANs when original DE7 is present.
 Original MTI, explicit original RRN, terminal, merchant, and currency are compared
 only when present. Partial reversals do not require equal amounts. Missing or
@@ -812,6 +836,16 @@ failure may stop internally before any OPN/ISO request is sent.
 
 ## TANGO transaction and reversal MTIs
 
+Network-management rows show `LOGON` or `ECHO` when ISO DE70 identifies the
+operation (`001` or `301`), including named/XML `networkManageCode` audit fields
+and MTIs `0800`/`0810`/`0820`/`0830`. Explicit Logon, Echo, Logoff/Sign-off,
+and DCC Inquiry descriptions also provide specific labels. The observed
+`ISOreq`/`ISOresp` suffix is preserved. Without clear operation evidence,
+the row retains `Network_Management` rather than guessing from the MTI alone.
+AKTIF/BKTKOS messages explicitly described as `MTI = 7140 - Loyalty Balance Inquiry`
+are labeled `Loyalty Balance Inquiry`, even when transported as ISO `0800`/`0810`.
+Processing code `890000` alone is not used to guess this operation.
+
 Business TANGO MTIs take priority over generic ISO/internal-action names when
 building the transaction summary.
 
@@ -1145,3 +1179,8 @@ and named network-management code fields (audit or XML). Missing or unknown
 DE070 values do not automatically imply LOGON or ECHO. Request/response
 suffixes still come from observed external audit blocks.
 Reference: [jPOS LogonManager](https://fw.jpos.org/docs/tutorial/logon-manager/).
+
+EMV completeness warnings use transaction context: they apply to recognized
+purchase/authorization requests. Void, reversal, refund, DCC, management,
+security and unknown operations do not inherit the purchase EMV checklist.
+Malformed explicit EMV tags and amount/currency comparisons remain checked.

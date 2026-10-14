@@ -75,12 +75,12 @@ def parse_spdh_message(text: str, process: str, flow_type: str) -> AuditMessage 
     return message
 
 
-def check_spdh_messages(messages: list[AuditMessage]) -> tuple[list[str], list[str]]:
+def check_spdh_messages(messages: list[AuditMessage], *, check_emv_completeness=True) -> tuple[list[str], list[str]]:
     errors, warnings = [], []
     processes = defaultdict(list)
     for message in messages:
         processes[message.process].append(message)
-        emv_errors, emv_warnings = check_emv(message)
+        emv_errors, emv_warnings = check_emv(message, check_completeness=check_emv_completeness)
         errors.extend(emv_errors)
         warnings.extend(emv_warnings)
         if message.invalid_fields:

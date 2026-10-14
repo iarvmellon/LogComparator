@@ -194,7 +194,7 @@ class Transaction:
                     self.operation_flows[phase] = position
         if (
             block.process_name.upper().startswith("OPN")
-            and {"0800", "0810"}.intersection(block.mti_values)
+            and {"0800", "0810", "0820", "0830"}.intersection(block.mti_values)
         ):
             self.network_management_codes.update(block.network_management_codes)
         self.mtis.extend(block.mti_values)
@@ -397,7 +397,7 @@ def parse_timestamp(text: str) -> datetime | None:
 NETWORK_CODE_NAMES = (
     "de070", "de70", "de_070", "de_70", "networkmanagementinformationcode",
     "networkmanagementinfocode", "networkmgmtinfocode", "networkmgmtcode",
-    "networkmanagementcode", "netmanagementcode", "netmgmtcode",
+    "networkmanagementcode", "networkmanagecode", "netmanagementcode", "netmgmtcode",
 )
 NETWORK_CODE_AUDIT_RE = re.compile(
     r"^\s*(?:0?70\.\s*[^:\r\n]+|(?:" + "|".join(NETWORK_CODE_NAMES)
@@ -860,12 +860,16 @@ def select_transaction_operation(transaction: Transaction) -> str:
     # An ISO 0800/0810 alone does not distinguish DCC, logon and echo.
     # Use explicit operation descriptions before the generic ISO fallback.
     descriptions = " ".join(transaction.message_types)
+    if re.search(r"\bLoyalty[ _-]+Balance[ _-]+Inquiry\b", descriptions, re.IGNORECASE):
+        return "Loyalty_Balance_Inquiry"
     if re.search(r"\bDCC[ _-]+Inquiry\b", descriptions, re.IGNORECASE):
         return "DCC_Inquiry"
     if re.search(r"\becho\b", descriptions, re.IGNORECASE):
         return "Echo_Test"
     if re.search(r"\b(?:log[ -]?on|sign[ -]?on)\b", descriptions, re.IGNORECASE):
         return "Logon"
+    if re.search(r"\b(?:log[ -]?off|sign[ -]?off)\b", descriptions, re.IGNORECASE):
+        return "Logoff"
     for candidate in transaction.request_mtis + transaction.mtis:
         if candidate in {"0860", "0861", "7080", "9081"}:
             return MTI_NAMES[candidate]
@@ -879,12 +883,14 @@ def select_transaction_type(transaction: Transaction) -> str:
     operation = select_transaction_operation(transaction)
     label = {
         "Logon": "LOGON",
+        "Logoff": "LOGOFF",
         "Sign-on_Request": "LOGON",
         "Sign-on_Response": "LOGON",
         "Echo_Test": "ECHO",
         "Echo_Test_Request": "ECHO",
         "Echo_Test_Response": "ECHO",
         "DCC_Inquiry": "DCC Inquiry",
+        "Loyalty_Balance_Inquiry": "Loyalty Balance Inquiry",
     }.get(operation)
     if label is None:
         # The observed flow determines the phase, not the MTI name.

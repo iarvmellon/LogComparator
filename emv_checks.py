@@ -25,7 +25,9 @@ ALIASES = {'applicationcryptogram': '9F26', 'cryptograminformationdata': '9F27',
            'amountauthorised': '9F02', 'amountauthorized': '9F02',
            'issuerapplicationdata': '9F10', 'terminalcapabilities': '9F33',
            'cvmresults': '9F34', 'terminaltype': '9F35', 'terminalcountrycode': '9F1A',
-           'transactioncurrencycode': '5F2A'}
+           'transactioncurrencycode': '5F2A', 'transcurrencycode': '5F2A',
+           'cid': '9F27', 'aip': '82', 'atc': '9F36', 'tvr': '95',
+           'amtauthorized': '9F02', 'amtother': '9F03', 'transactiontype': '9C'}
 CONTAINERS = {'iccdata', 'emvdata', 'chipdata', 'emvtlv', 'de55', 'de055'}
 FIELDS = re.compile(r'^[ \t]*(?:\d+\.[ \t]*)?([^:\r\n]+):[ \t]*(.*?)[ \t]*$', re.M)
 XML = re.compile(r'<field\b[^>]*\bname=[\'"]([^\'"]+)[\'"][^>]*>(.*?)</field>', re.I)
@@ -33,7 +35,19 @@ XML = re.compile(r'<field\b[^>]*\bname=[\'"]([^\'"]+)[\'"][^>]*>(.*?)</field>', 
 
 def parse_emv(text):
     tags, errors = {}, []
-    def add(tag, value):
+    strict_tags, ambiguous_names = set(), set()
+    def add(tag, value, strict=True):
+        if not strict:
+            if tag in strict_tags or tag in ambiguous_names:
+                return
+            if tag in tags and tags[tag] != value:
+                tags.pop(tag)
+                ambiguous_names.add(tag)
+                return
+        elif tag not in strict_tags:
+            tags.pop(tag, None)
+        if strict:
+            strict_tags.add(tag)
         if tag in tags and tags[tag] != value:
             errors.append(f'conflicting EMV tag {tag}')
         tags.setdefault(tag, value)
@@ -85,6 +99,10 @@ def parse_emv(text):
         value = match[2].strip()
         wrapped = re.fullmatch(r'(hex|asc|int)<(.*?)>', value, re.I)
         encoding = wrapped[1].lower() if wrapped else None
+        if not wrapped and match.re is XML:
+            xml_type = re.search(r'\btype=[\'"]([^\'"]+)[\'"]', match[0], re.I)
+            if xml_type:
+                encoding = 'asc' if xml_type[1].upper() == 'A' else 'opaque'
         if wrapped:
             value = wrapped[2].strip()
         explicit = re.fullmatch(r'(?:emvtag|tag|emv)?((?:[0-9a-f]{2}){1,4})', name)
@@ -100,16 +118,27 @@ def parse_emv(text):
             continue
         if not tag or (not explicit and 'icc' not in text.lower() and 'emv' not in text.lower()):
             continue
-        if encoding == 'int' or re.match(r'\w+<', value):
+        if encoding in {'int', 'opaque'} or re.match(r'\w+<', value):
             continue  # Numeric audit rendering loses byte widths; opaque dumps are not guessed.
-        if encoding == 'asc' and tag not in NUMERIC and not explicit:
-            continue  # Named asc fields may contain text rather than hex-encoded bytes.
         compact = re.sub(r'\s+', '', value).upper()
-        add(tag, compact)
+        if encoding == 'asc' and tag not in NUMERIC and not explicit:
+            # Named binary values may be fixed-layout/padded audit representations.
+            # Accept only a known fixed width; variable IAD is not a wire tag here.
+            width = WIDTHS.get(tag)
+            if (not width or width[0] != width[1]
+                    or len(compact) != width[0] * 2
+                    or not re.fullmatch(r'[0-9A-F]+', compact)):
+                continue
+        # Decoded numeric audit fields omit the packed-decimal padding nibble.
+        # This applies only to named ASCII country/currency fields, not wire tags.
+        if not explicit and encoding == 'asc' and tag in {'9F1A', '5F2A'}:
+            if re.fullmatch(r'[0-9]{1,3}', compact):
+                compact = compact.zfill(4)
+        add(tag, compact, strict=bool(explicit or encoding == 'hex'))
     return tags, list(dict.fromkeys(errors))
 
 
-def check_emv(message):
+def check_emv(message, *, check_completeness=True):
     errors = list(message.emv_errors)
     warnings = []
     for tag, value in message.emv_tags.items():
@@ -135,13 +164,13 @@ def check_emv(message):
     online = message.phase == 'request' and (
         message.process.startswith('OPN') and message.values.get('mti') in {'0100', '0200'}
         or message.process.startswith('PTMS') and message.emv_tags.get('9F27') == '80')
-    if online and message.emv_tags and not message.emv_errors:
+    if check_completeness and online and message.emv_tags and not message.emv_errors:
         missing = sorted(COMMON_ONLINE - message.emv_tags.keys())
         if missing:
             warnings.append('missing common online EMV tags: ' + ', '.join(missing)
                             + ' (verify acquirer requirements and log completeness)')
     chip_entry = message.values.get('entry_mode', '')[:2] in {'05', '07'}
-    if message.phase == 'request' and chip_entry and not message.emv_tags and not message.emv_errors:
+    if check_completeness and message.phase == 'request' and chip_entry and not message.emv_tags and not message.emv_errors:
         if message.process.startswith('PTMS') or message.values.get('mti') in {'0100', '0200'}:
             warnings.append('chip entry mode without decoded EMV data (verify required EMV data and log completeness)')
     for tag, key in (('5F2A', 'currency'), ('9F02', 'amount')):

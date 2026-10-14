@@ -28,13 +28,15 @@ ALIASES = {
     'rrn': ('retrievrefnumber', 'retrievalreferencenumber', 'rrn'),
     'original': ('originaldataelements', 'originaldata', 'originaldataelement'),
     'original_stan': ('origauditnumber', 'originalstan', 'origstan'),
-    'original_rrn': ('originalrrn', 'origrrn'),
+    'original_rrn': ('originalrrn', 'origrrn', 'retrievrefnumberorigin', 'retrievalreferencenumberorigin'),
+    'original_mti': ('originmti', 'originalmti'),
     'transmission_time': ('transmissiondatetime', 'transdatetime'),
     'bitmap': ('bitmap', 'primarybitmap', 'secondarybitmap'),
     'entry_mode': ('posentrymode', 'posentrymodecode'),
+    'network_management_code': ('networkmanagecode', 'networkmanagementcode'),
 }
 FIELD_NUMBERS = {4: 'amount', 7: 'transmission_time', 11: 'stan', 22: 'entry_mode', 37: 'rrn', 39: 'rc',
-                 41: 'tid', 42: 'mid', 49: 'currency', 90: 'original'}
+                 41: 'tid', 42: 'mid', 49: 'currency', 70: 'network_management_code', 90: 'original'}
 NAME_KEYS = {alias: key for key, aliases in ALIASES.items() for alias in aliases}
 LINE_FIELD = re.compile(r'^\s*(?:(\d+)\.\s*)?([^:\r\n]+)\s*:\s*(.*?)\s*$', re.M)
 XML_FIELD = re.compile(r'<field\b[^>]*\bname=[\'"]([^\'"]+)[\'"][^>]*>(.*?)</field>', re.I)
@@ -120,20 +122,31 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
             message.values[key] = value.zfill(length)
     original = message.values.get('original', '')
     if re.fullmatch(r'[0-9]{42}', original):
-        message.values['original_mti'] = original[:4]
-        message.values['original_stan'] = original[4:10]
-        message.values['original_time'] = original[10:20]
+        message.values.setdefault('original_mti', original[:4])
+        # BASE24 DE90 can contain original RRN/local date rather than ISO STAN/DE7.
+        # Explicit decoded references take priority and establish that representation.
+        if not message.values.get('original_rrn'):
+            message.values.setdefault('original_stan', original[4:10])
+            message.values.setdefault('original_time', original[10:20])
     message.emv_tags, message.emv_errors = parse_emv(text)
     return message
 
 
-def check_iso_messages(messages: list[IsoMessage]) -> tuple[list[str], list[str]]:
+def is_one_way_echo(message: IsoMessage) -> bool:
+    return (message.phase == 'request'
+            and message.process.startswith(('OPNBISOCAS', 'OPNBISOA', 'OPNWAY4B', 'OPNBISOE'))
+            and (message.values.get('mti') in {'0860', '7080'}
+                 or (message.values.get('mti') in {'0800', '0820'}
+                     and message.values.get('network_management_code', '').lstrip('0') == '301')))
+
+
+def check_iso_messages(messages: list[IsoMessage], *, check_emv_completeness=True) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     processes: dict[str, list[IsoMessage]] = defaultdict(list)
     for message in messages:
         processes[message.process].append(message)
-        emv_errors, emv_warnings = check_emv(message)
+        emv_errors, emv_warnings = check_emv(message, check_completeness=check_emv_completeness)
         errors.extend(emv_errors)
         warnings.extend(emv_warnings)
         if message.invalid_fields:
@@ -141,7 +154,7 @@ def check_iso_messages(messages: list[IsoMessage]) -> tuple[list[str], list[str]
     for process_messages in processes.values():
         requests = [m for m in process_messages if m.phase == 'request']
         responses = [m for m in process_messages if m.phase == 'response']
-        if requests and not responses:
+        if requests and not responses and not all(is_one_way_echo(m) for m in requests):
             warnings.append('missing ISO response (incomplete log or timeout)')
         if responses and not requests:
             warnings.append('ISO response without request (incomplete log)')

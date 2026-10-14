@@ -15,6 +15,22 @@ def message(phase, **values):
 
 
 class IsoCheckTests(unittest.TestCase):
+    def test_base24_original_references_find_original_without_guessed_de90_stan(self):
+        original = parse_iso_message('msgId : asc<0200>\nDE011 : asc<000185>\n'
+                                     'DE037 : asc<000753000185>', 'OPNBISOCAS01', 'request', '')
+        reversal = parse_iso_message('msgId : asc<0420>\nDE090 : asc<020000075300018510120857490010120000000000>\n'
+                                     'retrievRefNumberOrigin : asc<000753000185>\n'
+                                     'originMTI : asc<0200>', 'OPNBISOCAS01', 'request', '')
+        self.assertNotIn('original_stan', reversal.values)
+        self.assertNotIn('original_time', reversal.values)
+        self.assertEqual(check_original_transactions([('original', [original], False),
+                                                      ('reversal', [reversal], True)])['reversal'], ([], []))
+
+    def test_explicit_original_stan_is_not_overwritten(self):
+        parsed = parse_iso_message('origAuditNumber : asc<185>\n'
+                                   'DE090 : asc<020000075300018510120857490010120000000000>',
+                                   'OPN01', 'request', '')
+        self.assertEqual(parsed.values['original_stan'], '185')
     def test_matching_exchange_and_decline_are_not_errors(self):
         for code in ('00', '05'):
             self.assertEqual(check_iso_messages([message('request'), message('response', rc=code)]), ([], []))

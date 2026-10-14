@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Iterable
-from iso_checks import check_iso_messages
+from iso_checks import check_iso_messages, is_one_way_echo
 from diagnostic_common import check_original_transactions
 from spdh_checks import check_spdh_messages
 
@@ -11,10 +11,22 @@ if TYPE_CHECKING:
     from log_core import Transaction
 
 
+def is_one_way_heartbeat(transaction: Transaction) -> bool:
+    return (bool(transaction.iso_messages) and not transaction.spdh_messages
+            and all(is_one_way_echo(message) for message in transaction.iso_messages))
+
+
 def select_transaction_operation(transaction):
     # Runtime import avoids coupling parser construction to diagnostic imports.
     from log_core import select_transaction_operation as select_operation
     return select_operation(transaction)
+
+
+def emv_completeness_applies(transaction):
+    return select_transaction_operation(transaction) in {
+        'Purchase', 'Purchase_with_Cashback', 'Cash_Advance',
+        'Pre-auth', 'Pre-auth_Request', 'Authorization_Request', 'Financial_Request',
+    }
 
 
 def iso_rrn_phases(transaction: Transaction) -> dict[str, dict[str, set[str]]]:
@@ -63,7 +75,7 @@ def select_possible_problem(transaction: Transaction, shared_rrn: bool = False,
             break
     if shared_rrn:
         problems.append("RRN identical with other transaction")
-    errors, warnings = check_iso_messages(transaction.iso_messages)
+    errors, warnings = check_iso_messages(transaction.iso_messages, check_emv_completeness=emv_completeness_applies(transaction))
     problems.extend(errors)
     if original_problems:
         problems.extend(original_problems[0])
@@ -87,7 +99,7 @@ def build_problem_columns(transactions: Iterable[Transaction], tango_findings: d
             [(t.trans_uid, getattr(t, attribute), exempt[t.trans_uid]) for t in transactions],
             use_rrn=protocol == 'ISO')
         for t in transactions:
-            errors, warnings = checker(getattr(t, attribute))
+            errors, warnings = checker(getattr(t, attribute), check_emv_completeness=emv_completeness_applies(t))
             phases_by_process = iso_rrn_phases(t) if protocol == 'ISO' else {}
             if any(p.get('request') and p.get('response') and p['request'] != p['response']
                    for p in phases_by_process.values()):
