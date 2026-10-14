@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from tkcalendar import Calendar, DateEntry
+from responsive_layout import wrap_controls
 
 from gui_services import (
     download_remaining_uat_audits,
@@ -23,7 +24,7 @@ from gui_services import (
     list_remote_logs,
 )
 from log_core import *
-from transaction_checks import build_problem_columns, is_one_way_heartbeat
+from transaction_checks import build_problem_columns, is_successful_protocol_only, successful_local_reversal_uids
 from tango_checks import scan_tango_diagnostics
 
 
@@ -102,7 +103,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     inline_progress_var = tk.DoubleVar(root, value=0.0)
     inline_progress_text_var = tk.StringVar(root, value="")
     transaction_rows: list[tuple[str, tuple[str, ...]]] = []
-    heartbeat_uids: set[str] = set()
+    protocol_only_success_uids: set[str] = set()
     transaction_sort_state: dict[str, bool] = {}
     transaction_load_cache: dict[
         tuple[str, str, tuple[tuple[str, int, int], ...]],
@@ -295,12 +296,13 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     folder_frame.pack(fill=tk.X, padx=12, pady=(4, 4))
     data_frame = tk.LabelFrame(folder_frame, text="Data", padx=6, pady=3)
     data_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    tk.Label(data_frame, text="Log folder:").pack(side=tk.LEFT, padx=(0, 8))
+    tk.Label(data_frame, text="Log folder:").grid(row=0, column=0, padx=(0, 8))
     folder_entry = tk.Entry(
-        data_frame, textvariable=folder_var, state="readonly", width=72
+        data_frame, textvariable=folder_var, state="readonly", width=24
     )
-    folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    tk.Label(data_frame, text="Bank/Acquirer:").pack(side=tk.LEFT, padx=(14, 8))
+    folder_entry.grid(row=0, column=1, sticky="ew")
+    data_frame.grid_columnconfigure(1, weight=1)
+    tk.Label(data_frame, text="Bank/Acquirer:").grid(row=0, column=2, padx=(14, 8))
     bank_combo = ttk.Combobox(
         data_frame,
         textvariable=bank_var,
@@ -309,13 +311,15 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         state="disabled",
         width=25,
     )
-    bank_combo.pack(side=tk.LEFT)
+    bank_combo.grid(row=0, column=3)
     time_filter_frame = tk.LabelFrame(folder_frame, text="Time range", padx=6, pady=3)
     time_filter_frame.pack(side=tk.LEFT, padx=(14, 0))
-    timezone_label = tk.Label(time_filter_frame, text="Timezone:")
+    timezone_group = tk.Frame(time_filter_frame)
+    timezone_group.pack(side=tk.LEFT)
+    timezone_label = tk.Label(timezone_group, text="Timezone:")
     timezone_label.pack(side=tk.LEFT, padx=(10, 5))
     timezone_combo = ttk.Combobox(
-        time_filter_frame,
+        timezone_group,
         textvariable=timezone_var,
         values=("UTC", "UTC+1", "UTC+2", "UTC+3", "UTC-1", "UTC-2", "UTC-3"),
         state="readonly",
@@ -770,7 +774,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         second_var: tk.StringVar,
     ):
         frame = tk.Frame(time_filter_frame)
-        frame.pack(side=tk.LEFT, padx=(4, 0), before=timezone_label)
+        frame.pack(side=tk.LEFT, padx=(4, 0), before=timezone_group)
         tk.Label(frame, text=label, anchor="e").pack(side=tk.LEFT, padx=(0, 4))
         controls = tk.Frame(frame)
         controls.pack(side=tk.LEFT)
@@ -1261,7 +1265,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                                   ('isopossibleproblem', 'spdhpossibleproblem')),
                         values[transaction_columns.index("responsecodespdh")],
                         values[transaction_columns.index("responsecodeiso")],
-                        heartbeat=uid in heartbeat_uids,
+                        protocol_only_success=uid in protocol_only_success_uids,
                     ),))),
                 )
                 visible_count += 1
@@ -1354,6 +1358,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             progress_callback(88.0, "Build transaction list")
         tango_findings = scan_tango_diagnostics(tango_logs or [], set(transactions), progress_callback)
         problem_columns = build_problem_columns(transactions.values(), tango_findings)
+        local_reversal_uids = successful_local_reversal_uids(transactions.values())
         matching = [
             transaction
             for transaction in transactions.values()
@@ -1361,10 +1366,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         ]
         matching.sort(key=lambda transaction: transaction.first_index)
         for transaction in matching:
-            if is_one_way_heartbeat(transaction):
-                heartbeat_uids.add(transaction.trans_uid)
+            if is_successful_protocol_only(transaction) or transaction.trans_uid in local_reversal_uids:
+                protocol_only_success_uids.add(transaction.trans_uid)
             else:
-                heartbeat_uids.discard(transaction.trans_uid)
+                protocol_only_success_uids.discard(transaction.trans_uid)
         rows: list[tuple[str, tuple[str, ...]]] = []
         total_matching = max(len(matching), 1)
         for row_index, transaction in enumerate(matching, start=1):
@@ -1929,6 +1934,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     update_source_state()
     folder_var.trace_add("write", lambda *_args: update_bank_state())
     update_bank_state()
+    wrap_controls(options_bar, (generated_options, data_options, flow_options, command_options))
+    wrap_controls(folder_frame, (data_frame, time_filter_frame), stretch=True)
+    wrap_controls(time_filter_frame, (min_datetime_group, max_datetime_group, timezone_group))
     root.mainloop()
     if selection.get("interrupted"):
         raise KeyboardInterrupt

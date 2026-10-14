@@ -42,6 +42,18 @@ def key(tag):
     return tuple(map(int, RELEASE.fullmatch(tag).groups()))
 
 
+def next_release_tag(tags):
+    if not tags:
+        return 'v1.0.0'
+    major, minor, patch = key(max(tags, key=key))
+    if patch >= 29:
+        minor += 1
+        patch = 1
+    else:
+        patch += 1
+    return f'v{major}.{minor}.{patch}'
+
+
 def create_release():
     changes = git('status', '--porcelain', '-z').stdout.split('\0')
     for change in changes:
@@ -57,8 +69,7 @@ def create_release():
                 # Local release tags may exist after an interrupted tag push.
                 git('push', 'origin', f'refs/tags/{tag}')
                 return tag
-        major, minor, patch = key(max(tags, key=key)) if tags else (1, 0, -1)
-        tag = f'v{major}.{minor}.{patch + 1}'
+        tag = next_release_tag(tags)
         git('tag', '-a', tag, '-m', f'LogComparator {tag}', commit)
         result = git('push', 'origin', f'refs/tags/{tag}', check=False)
         if result.returncode == 0:

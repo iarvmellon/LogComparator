@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Iterable
 from iso_checks import check_iso_messages, is_one_way_echo
-from diagnostic_common import check_original_transactions
+from diagnostic_common import check_original_transactions, normalized
 from spdh_checks import check_spdh_messages
 
 if TYPE_CHECKING:
@@ -20,6 +20,90 @@ def select_transaction_operation(transaction):
     # Runtime import avoids coupling parser construction to diagnostic imports.
     from log_core import select_transaction_operation as select_operation
     return select_operation(transaction)
+
+
+def is_successful_protocol_only(transaction: Transaction) -> bool:
+    if is_one_way_heartbeat(transaction):
+        return True
+    if transaction.iso_messages or select_transaction_operation(transaction) not in {'Close_Batch', 'Generate_Key'}:
+        return False
+    by_process = {}
+    for message in transaction.spdh_messages:
+        by_process.setdefault(message.process, []).append(message)
+    return bool(by_process) and all(
+        any(message.phase == 'request' for message in messages)
+        and any(message.phase == 'response' for message in messages)
+        and all(message.values.get('rc') == '000' for message in messages if message.phase == 'response')
+        for messages in by_process.values()
+    )
+
+
+
+def successful_local_reversal_uids(transactions):
+    """Recognize completed local reversals using unique explicit SPDH references."""
+    transactions = list(transactions)
+    by_uid = {t.trans_uid: t for t in transactions}
+    reversal = {t.trans_uid: bool(re.search(r'(?:^|_)Reversal(?:_|$)',
+                                          select_transaction_operation(t), re.I)) for t in transactions}
+    originals = check_original_transactions(
+        [(t.trans_uid, t.spdh_messages, bool(re.search(r'(?:^|_)(?:Reversal|Void)(?:_|$)',
+                                                      select_transaction_operation(t), re.I)))
+         for t in transactions], use_rrn=False)
+    by_stan, by_sequence = {}, {}
+    for t in transactions:
+        if re.search(r'(?:^|_)(?:Reversal|Void)(?:_|$)', select_transaction_operation(t), re.I):
+            continue
+        for m in t.spdh_messages:
+            if m.phase != 'request':
+                continue
+            v = m.values
+            if v.get('stan'):
+                by_stan.setdefault((m.process, normalized('stan', v['stan'])), set()).add(t.trans_uid)
+            if v.get('sequence') and v.get('tid'):
+                by_sequence.setdefault((m.process, v['tid'], normalized('sequence', v['sequence'])), set()).add(t.trans_uid)
+    successful = set()
+    for t in transactions:
+        if not reversal[t.trans_uid] or t.iso_messages or originals.get(t.trans_uid) != ([], []):
+            continue
+        processes = {m.process for m in t.spdh_messages}
+        if not processes or any(
+            not any(m.phase == 'request' and m.process == process for m in t.spdh_messages)
+            or not any(m.phase == 'response' and m.process == process for m in t.spdh_messages)
+            for process in processes
+        ) or any(m.values.get('rc') != '000' for m in t.spdh_messages if m.phase == 'response'):
+            continue
+        matched = set()
+        valid = True
+        for m in t.spdh_messages:
+            if m.phase != 'request':
+                continue
+            v = m.values
+            if v.get('original_stan'):
+                candidates = by_stan.get((m.process, normalized('stan', v['original_stan'])), set())
+            elif v.get('original_sequence') and v.get('tid'):
+                candidates = by_sequence.get((m.process, v['tid'], normalized('sequence', v['original_sequence'])), set())
+            else:
+                valid = False
+                break
+            if len(candidates) != 1:
+                valid = False
+                break
+            matched.update(candidates)
+        if not valid or len(matched) != 1:
+            continue
+        original = by_uid[next(iter(matched))]
+        if (original.iso_messages or any(p.upper().startswith('OPN') for p in original.process_names)
+                or any(p.startswith('ISO:') for p in original.operation_flows)):
+            continue
+        original_time = original.request_timestamp or original.first_timestamp
+        reversal_time = t.request_timestamp or t.first_timestamp
+        if original_time and reversal_time:
+            preceding = original_time < reversal_time
+        else:
+            preceding = original.first_index < t.first_index
+        if preceding:
+            successful.add(t.trans_uid)
+    return successful
 
 
 def emv_completeness_applies(transaction):

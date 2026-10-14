@@ -32,13 +32,14 @@ def different(left: AuditMessage, right: AuditMessage, key: str) -> bool:
     return bool(a and b and normalized(key, a) != normalized(key, b))
 
 
-def problem_row_tag(problem: str, spdh_rc: str, iso_rc: str, heartbeat: bool = False) -> str:
+def problem_row_tag(problem: str, spdh_rc: str, iso_rc: str, heartbeat: bool = False,
+                    protocol_only_success: bool = False) -> str:
     parts = [part for part in problem.split('; ') if part]
     if any(not part.startswith('warning: ') for part in parts):
         return 'problem'
     if parts:
         return 'warning'
-    return 'approved' if heartbeat or (spdh_rc == 'Approved(000)' and iso_rc == 'Approved(00)') else ''
+    return 'approved' if heartbeat or protocol_only_success or (spdh_rc == 'Approved(000)' and iso_rc == 'Approved(00)') else ''
 
 
 def check_original_transactions(

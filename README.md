@@ -34,6 +34,9 @@ Running `main.py` without local audit arguments starts the GUI:
 
 1. Open the main `LogComparator` application window.
    The window opens maximized.
+   The options and Data/Time range controls wrap onto additional rows when
+   the window becomes narrower, including when moved to a lower-resolution
+   monitor. Timezone and action buttons remain accessible.
 2. Use **File > Import** for local files, or **File > SSH/SCP (UAT)** for UAT
    download.
 3. Use **Tools > Export options** to choose `SPDH+ISO`, `ISO`, or `SPDH`,
@@ -301,7 +304,10 @@ pushes do not create tags. Commit the source changes, then run explicitly:
 
 The script fetches tags from `origin`, creates the next annotated
 `vMAJOR.MINOR.PATCH` tag on HEAD and pushes only that tag. The first release is
-`v1.0.0`; subsequent releases increment the highest patch version. An already
+`v1.0.0`; subsequent releases increment the highest patch version up to `29`.
+After `v1.0.29`, the next tag is `v1.1.1`; after `v1.1.29`, it is `v1.2.1`,
+and so on. The minor version increases and the patch restarts at `1`, while
+the major version remains unchanged. An already
 released commit reuses its annotated tag and retries its push. Tag collisions
 are retried without force-pushing or overwriting remote tags. Source changes
 must be committed; generated files under `build/` and `dist/` may remain modified.
@@ -471,6 +477,11 @@ transactions in a table with:
 - AMT
 - RC_SPDH
 - RC_ISO
+
+`Close_Batch` and `Generate_Key` also appear green when they contain only
+SPDH messages, each PTMS process has both a request and response, and all
+responses have SPDH RC `000`. No ISO exchange is required. Declined or incomplete
+exchanges are not marked green. Diagnostic errors/warnings still override green.
 
 Rows have a green background when both `RC_SPDH` is `Approved(000)` and
 `RC_ISO` is `Approved(00)`. A missing or non-approved response in either
@@ -1184,3 +1195,11 @@ EMV completeness warnings use transaction context: they apply to recognized
 purchase/authorization requests. Void, reversal, refund, DCC, management,
 security and unknown operations do not inherit the purchase EMV checklist.
 Malformed explicit EMV tags and amount/currency comparisons remain checked.
+
+SPDH-only reversals can also be green when each PTMS process has request/response,
+all responses are `000`, and explicit original STAN or terminal/sequence references
+uniquely locate an earlier original transaction in the loaded logs. The original
+must have no observed ISO messages, OPN process or ISO flow, and original-reference
+checks must pass. Missing or ambiguous originals, host-connected originals,
+incomplete flows and declines do not qualify. Other warnings/errors retain
+priority over green. This uses loaded-log evidence, not proof of host-side state.
