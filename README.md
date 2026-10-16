@@ -193,6 +193,12 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    docker save -o logcomparator.tar logcomparator:local
    ```
 
+   Keep both `--build-arg` options: they embed the Git version and commit in the
+   image for the browser tab and **Help > About > Version**. A plain
+   `docker build -t logcomparator:local .` uses the default `container` label;
+   copying the image to a Git checkout on Linux does not add version metadata.
+   Run the build in the Windows Git checkout, with Git available on PATH.
+
 2. Transfer the new `logcomparator.tar` to the project directory on the Linux
    server using your usual file-transfer method. The archive contains the
    complete application image, not just the Python base image. Transfer it
@@ -219,10 +225,15 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    ```bash
    docker compose ps
    docker compose logs --tail=100 logcomparator
+   curl http://127.0.0.1:4020/health
    ```
 
    Open `http://<server-IP>:4020`. Recreating the container preserves its mounted
    log sources and named data volumes; do not use `docker compose down -v`.
+   The health response's `version`, browser tab and About's Version field should
+   show the Git build version, for example `v1.0.29-6-g1974451`. If they show
+   `container`, rebuild on Windows with the metadata arguments above, export and
+   transfer the new archive, load it and recreate the container. Then use Ctrl+F5.
 
 A code change needs a new image build and archive. Changing only the published
 host port in Compose/`.env` does not require a new image or archive.
@@ -232,7 +243,9 @@ and transaction tabs. The Windows Docker build command above embeds the Git
 version and commit so the title identifies the installed image. For Compose
 builds, set `LOGCOMPARATOR_VERSION` and `LOGCOMPARATOR_GIT_HASH` in the local
 `.env` to the desired Git describe/commit values before building. Without build
-metadata, Docker images use the default `container` label in the title.
+metadata, Docker images use the default `container` label in the title and
+About's Version field. These values are embedded at build time: changing `.env`
+and restarting an existing image does not change its version metadata.
 
 ## Migration from the native UI
 
