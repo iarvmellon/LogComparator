@@ -134,9 +134,23 @@ docker compose up -d --build
 docker compose logs -f logcomparator
 ```
 
-Open `http://<server-IP>:8080`. Use **File > Import** to select an available
+Open `http://<server-IP>:4020`. Use **File > Import** to select an available
 date and bank; the two source folders are prefilled. All local banks remain
 available through Bank/Acquirer. SSH menus and credential fields are disabled.
+
+Docker publishes host TCP 4020 to container TCP 8080. The application and
+container continue listening on 8080; only the external port changes. Set
+`LOGCOMPARATOR_PORT=4020` in existing `.env` files and allow TCP 4020 through
+the server firewall. For an existing image listening on 8080, this change needs
+no image build: update the Compose port mapping to
+`"${LOGCOMPARATOR_PORT:-4020}:8080"`, then run:
+
+```sh
+docker compose up -d --no-build --pull never
+```
+
+Compose recreates the container with the updated published port and preserves
+its mounted data volumes.
 
 The container runs as UID/GID `10001:10001`, with the supplementary group
 `TANGO_READ_GID`. This user/group needs read access to the files and traversal
@@ -150,10 +164,66 @@ Source files are never extracted in place. `docker compose down` preserves
 these volumes; `down -v` deletes them. The image includes a `/health` check.
 No Linux system packages or SSH client are installed by the Dockerfile.
 
+If building reports a timeout reaching `auth.docker.io`, the Docker daemon
+cannot reach Docker Hub over HTTPS. The Dockerfile uses the bundled frontend
+and does not download `docker/dockerfile:1`. For an older copy, remove its first
+`# syntax=docker/dockerfile:1` line and retry. Pulling the Python base image still
+requires Docker Hub access, and installing Python dependencies requires PyPI
+access. Check server routing/firewall and Docker daemon proxy settings if
+`docker pull python:3.13-slim-bookworm` also times out; changing the container's
+group ID does not affect registry connectivity.
+
 For source runs, `LOGCOMPARATOR_LOG_DIR`, `LOGCOMPARATOR_AUDIT_DIR`,
 `LOGCOMPARATOR_OUTPUT`, `LOGCOMPARATOR_CACHE` and `LOGCOMPARATOR_ENABLE_SSH`
 configure the same paths and behavior. Linux defaults use the two `/opt/tango`
 directories above and disable SSH; Windows retains its existing defaults.
+
+### Update through Git and transfer the Docker image
+
+Use this procedure when Windows can build the image but the Linux server cannot
+download Docker/Python dependencies. Run all commands from the project directory.
+Docker Desktop on Windows must use Linux containers. The commands below target
+an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
+
+1. On Windows, commit and push the code changes to Git. Then build the image
+   from that same version and export it:
+
+   ```powershell
+   docker build --platform linux/amd64 -t logcomparator:local .
+   docker save -o logcomparator.tar logcomparator:local
+   ```
+
+2. Transfer the new `logcomparator.tar` to the project directory on the Linux
+   server using your usual file-transfer method. The archive contains the
+   complete application image, not just the Python base image. Transfer it
+   separately; do not commit it to Git. Keep the server's `.env` and credentials
+   outside Git as well.
+
+3. On Linux, pull the matching code/Compose version, load the archive and
+   recreate the container without building or pulling an image:
+
+   ```bash
+   git pull
+   docker load -i logcomparator.tar
+   docker compose up -d --no-build --pull never --force-recreate
+   ```
+
+   Preserve the server's existing `.env`, including `LOGCOMPARATOR_PORT=4020`
+   and its source paths/group ID. Git transfers the source files; `docker load`
+   installs the separately transferred image. Both must represent the same update.
+
+4. Check the deployment and refresh the browser with Ctrl+F5:
+
+   ```bash
+   docker compose ps
+   docker compose logs --tail=100 logcomparator
+   ```
+
+   Open `http://<server-IP>:4020`. Recreating the container preserves its mounted
+   log sources and named data volumes; do not use `docker compose down -v`.
+
+A code change needs a new image build and archive. Changing only the published
+host port in Compose/`.env` does not require a new image or archive.
 
 ## Migration from the native UI
 
