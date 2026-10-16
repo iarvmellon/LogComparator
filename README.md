@@ -34,6 +34,10 @@ Running `main.py` without local audit arguments starts the GUI:
 
 1. Open the main `LogComparator` application window.
    The window opens maximized.
+   Use **Ctrl + +** / **Ctrl + -** to increase/decrease the interface font size
+   (including the transaction table). The numeric keypad is supported, as is
+   **Ctrl + =** for increasing the size without Shift. These actions are also
+   available under **View**. Font size changes apply for the current session.
    The options and Data/Time range controls wrap onto additional rows when
    the window becomes narrower, including when moved to a lower-resolution
    monitor. Timezone and action buttons remain accessible.
@@ -93,9 +97,11 @@ decodes only blocks containing a transaction ID and retains transaction metadata
 instead of caching full multi-gigabyte file contents, substantially reducing RAM
 usage and initial loading time.
 
-The transaction list has separate `ISO possible problem` and
-`SPDH possible problem` columns. When request and
-response RRN values differ within the same OPN process, `ISO possible problem` displays
+The transaction list has one shared `Possible problem` column for ISO and SPDH.
+Duplicate findings appear once. Severity prefixes (`warning:` / `error:`) are
+hidden in the displayed text; row colors identify severity: yellow for warnings,
+red for errors, with red taking priority when both occur. When request and
+response RRN values differ within the same OPN process, `Possible problem` displays
 `differentRRN on the same transaction` and the entire row has a red background, overriding the green
 approved highlighting. No RRN mismatch is reported when the RRNs match or either
 side has no RRN available. Different processes are checked independently.
@@ -167,7 +173,7 @@ only these ISO requests and no SPDH messages are green when no other diagnostic
 applies. Errors and warnings still override green; Logon, payment requests and
 Echo requests for other acquirers retain their normal checks. Response codes
 remain `Unknown` when no response exists; no approval code is fabricated.
-All findings use the existing protocol columns and row colors: red for errors,
+All findings use the shared `Possible problem` column and row colors: red for errors,
 yellow for warnings, with red taking priority. No bank-specific mandatory fields
 or cryptographic verification is assumed.
 
@@ -178,7 +184,7 @@ records do not participate in these ISO checks. Original STAN fields are kept
 separate from the current STAN. Numeric padding is ignored for STAN, amount,
 and currency comparisons; absent fields are not treated as different values.
 
-| Finding in `ISO possible problem` | Highlight |
+| Finding in `Possible problem` | Highlight |
 | --- | --- |
 | `different STAN on the same transaction` | Red |
 | `currency mismatch` | Red |
@@ -186,13 +192,13 @@ and currency comparisons; absent fields are not treated as different values.
 | `unexpected response MTI` for a supported ISO pair | Red |
 | `conflicting responses` with different response codes for the same MTI/STAN/process | Red |
 | `original transaction mismatch` for a uniquely identified reversal/void original | Red |
-| `invalid ISO message format (...)` for invalid decoded numeric DE4/11/49/90 or bitmap syntax | Red |
-| `warning: amount mismatch (check partial approval/adjustment)` | Yellow |
-| `warning: missing response code` for a supported response MTI | Yellow |
+| `invalid ISO message format (...)` for invalid explicitly numbered fixed-length fields or bitmap syntax | Red |
+| `amount mismatch (check partial approval/adjustment)` | Yellow |
+| `missing response code` for a supported response MTI | Yellow |
 | Missing ISO request/response or original transaction | Yellow |
 | Missing original reference or ambiguous pairing | Yellow |
 
-Findings are combined within their protocol column. Red takes precedence over yellow,
+Findings are combined in the shared `Possible problem` column. Red takes precedence over yellow,
 and both take precedence over approved green. Declines alone are not flagged.
 Original-transaction lookup uses DE90/original STAN when available, otherwise
 original/current RRN, within the same OPN process across the loaded dataset.
@@ -214,7 +220,7 @@ MTI `0200` when the original request was `0100` is a yellow warning pending
 verification of the NBG mapping. This finding alone does not make the row red.
 Other original-reference mismatches and other banks retain their existing severity.
 SPDH `Invoice_OriginTransSeqNo` is recognized as an original sequence reference.
-Explicit ISO DE4/7/11/49/90 `hex<...>` values are decoded as packed decimal only
+Explicit fixed-length numeric ISO `hex<...>` values are decoded as packed decimal only
 when they contain decimal digits with the exact expected byte width (and a zero
 padding nibble for odd-width fields). Other hexadecimal encodings are skipped.
 
@@ -222,8 +228,16 @@ These checks do not implement a bank-specific wire decoder: raw hexadecimal
 payloads, binary encodings, bitmap-to-payload consistency, and LLVAR/LLLVAR
 length prefixes cannot be certified from decoded audit fields. Format checks
 cover explicitly numbered decoded fields (including `DE011` and XML forms)
-and logged hexadecimal/binary bitmaps. Integer renderings may omit leading
-zeros. Proprietary MTI pairings are not guessed. Amount changes and missing
+with numeric widths DE3=6, DE4/5/6=12, DE7=10, DE11/12=6,
+DE13/14/15/18=4, DE19/23/49/50/51/70=3, DE25/26=2 and DE90=42.
+ASCII/unwrapped numeric values require the exact digit count; `int<...>` may
+omit leading zeros but may not exceed that count. Absent, masked and opaque
+values are skipped. Text fields DE37=12, DE38=6, DE41=8, DE42=15 and DE43=40
+are checked for significant overlength; trimmed text and extra trailing audit
+padding do not establish an error. DE52 is checked for exactly 8 bytes only
+in explicit unmasked `hex<...>` form, and its value is never included in findings.
+Logged hexadecimal/binary bitmap syntax is also checked.
+Proprietary MTI pairings are not guessed. Amount changes and missing
 response codes remain warnings until bank-specific approval/required-field
 rules are available.
 
@@ -1203,3 +1217,14 @@ must have no observed ISO messages, OPN process or ISO flow, and original-refere
 checks must pass. Missing or ambiguous originals, host-connected originals,
 incomplete flows and declines do not qualify. Other warnings/errors retain
 priority over green. This uses loaded-log evidence, not proof of host-side state.
+
+
+### Audit-only Logon exchanges
+
+Logon audit blocks with MTI 0800/0810 and DE70=001 are shown even when Tango
+has not assigned a transUId. Request and response are grouped by process,
+audit date and flow reference, using a visible LOGON-prefixed identifier.
+These generated identifiers support row export and comparison; they are not
+Tango transaction IDs. BKT/BKTKOS link Logons without acquirer IDs appear under
+both banks because they use the shared OPNBISOBKT process. Explicit acquirer IDs
+still restrict financial transactions and Logons to the matching bank.

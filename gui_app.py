@@ -14,6 +14,8 @@ from typing import Callable
 from tkcalendar import Calendar, DateEntry
 from responsive_layout import wrap_controls
 
+from diagnostic_common import problem_display_text
+
 from gui_services import (
     download_remaining_uat_audits,
     download_uat_sources,
@@ -1009,8 +1011,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt",
         "responsecodespdh",
         "responsecodeiso",
-        "isopossibleproblem",
-        "spdhpossibleproblem",
+        "possibleproblem",
     )
     transaction_frame = tk.Frame(root)
     transaction_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 8))
@@ -1037,8 +1038,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt": "AMT",
         "responsecodespdh": "RC_SPDH",
         "responsecodeiso": "RC_ISO",
-        "isopossibleproblem": "ISO possible problem",
-        "spdhpossibleproblem": "SPDH possible problem",
+        "possibleproblem": "Possible problem",
     }
     column_widths = {
         "datetime": 170,
@@ -1053,8 +1053,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         "amt": 110,
         "responsecodespdh": 170,
         "responsecodeiso": 170,
-        "isopossibleproblem": 300,
-        "spdhpossibleproblem": 300,
+        "possibleproblem": 400,
     }
     def sort_transaction_tree(column: str) -> None:
         reverse = transaction_sort_state.get(column, False)
@@ -1093,7 +1092,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         return tuple(
             column
             for column in transaction_columns
-            if column in ("datetime", "isopossibleproblem", "spdhpossibleproblem") or column_visible_vars[column].get()
+            if column in ("datetime", "possibleproblem") or column_visible_vars[column].get()
         )
 
     def apply_column_filter_visibility() -> None:
@@ -1164,16 +1163,18 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             return 0
 
     def display_values_for_timezone(values: tuple[str, ...]) -> tuple[str, ...]:
-        if not values or not values[0]:
+        if not values:
             return values
+        displayed = list(values)
+        problem_index = transaction_columns.index("possibleproblem")
+        displayed[problem_index] = problem_display_text(displayed[problem_index])
         try:
             utc_datetime = datetime.strptime(values[0], "%Y-%m-%d %H:%M:%S.%f")
         except ValueError:
-            return values
+            return tuple(displayed)
         shifted_datetime = utc_datetime + timedelta(
             hours=selected_timezone_offset_hours()
         )
-        displayed = list(values)
         displayed[0] = shifted_datetime.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return tuple(displayed)
 
@@ -1261,8 +1262,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     iid=uid,
                     values=display_values_for_timezone(values),
                     tags=tuple(filter(None, (problem_row_tag(
-                        '; '.join(values[transaction_columns.index(column)] for column in
-                                  ('isopossibleproblem', 'spdhpossibleproblem')),
+                        values[transaction_columns.index("possibleproblem")],
                         values[transaction_columns.index("responsecodespdh")],
                         values[transaction_columns.index("responsecodeiso")],
                         protocol_only_success=uid in protocol_only_success_uids,
@@ -1400,7 +1400,11 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
                     select_response_code(transaction.iso_response_codes),
                     ISO_RC_NAMES,
                 ),
-                *problem_columns[transaction.trans_uid],
+                "; ".join(dict.fromkeys(
+                    finding
+                    for protocol_problems in problem_columns[transaction.trans_uid]
+                    for finding in protocol_problems.split("; ") if finding
+                )),
             )
             rows.append((transaction.trans_uid, values))
             if progress_callback and (row_index == len(matching) or row_index % 250 == 0):
@@ -1923,6 +1927,35 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     edit_menu.add_command(label="Select all transactions", command=select_all_transactions)
     edit_menu.add_command(label="Clear selection", command=clear_transaction_selection)
     view_menu.add_command(label="Columns / Filters...", command=show_column_filter_options)
+    zoom_fonts = [tkfont.nametofont(name, root=root) for name in tkfont.names(root)]
+    base_font_sizes = [font.cget("size") for font in zoom_fonts]
+    font_zoom = 0
+    base_row_height = int(style.lookup("Treeview", "rowheight") or 20)
+
+    def change_font_size(delta: int) -> str:
+        nonlocal font_zoom
+        new_zoom = max(-4, min(20, font_zoom + delta))
+        if new_zoom == font_zoom:
+            return "break"
+        font_zoom = new_zoom
+        for font, base_size in zip(zoom_fonts, base_font_sizes):
+            # Negative Tk sizes denote pixels; preserve their unit.
+            size = max(6, abs(base_size) + font_zoom)
+            font.configure(size=-size if base_size < 0 else size)
+        style.configure(
+            "Treeview",
+            rowheight=max(base_row_height, tkfont.nametofont("TkDefaultFont").metrics("linespace") + 8),
+        )
+        autosize_transaction_columns()
+        return "break"
+
+    view_menu.add_separator()
+    view_menu.add_command(label="Increase font size", accelerator="Ctrl++", command=lambda: change_font_size(1))
+    view_menu.add_command(label="Decrease font size", accelerator="Ctrl+-", command=lambda: change_font_size(-1))
+    for key in ("plus", "equal", "KP_Add"):
+        root.bind_all(f"<Control-{key}>", lambda _event: change_font_size(1))
+    for key in ("minus", "KP_Subtract"):
+        root.bind_all(f"<Control-{key}>", lambda _event: change_font_size(-1))
     tools_menu.add_command(
         label="Compare",
         command=compare_selected_logs,

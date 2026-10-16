@@ -564,7 +564,7 @@ def parse_block(text: str, index: int) -> BlockMeta:
         process_name=process_name,
         flow_dir=flow_dir,
         flow_type=flow_type,
-        trans_uid=trans_uid,
+        trans_uid=trans_uid or logon_exchange_uid(text, process_name, flow_type, mti_values),
         mti_values=mti_values,
         rrn_values=rrn_values,
         processing_codes=processing_codes,
@@ -806,7 +806,7 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         process_name=process_name,
         flow_dir=flow_dir,
         flow_type=flow_type,
-        trans_uid=trans_uid,
+        trans_uid=trans_uid or logon_exchange_uid(text, process_name, flow_type, mti_values),
         mti_values=mti_values,
         rrn_values=rrn_values,
         processing_codes=processing_codes,
@@ -823,11 +823,29 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
     )
 
 
+def logon_exchange_uid(text: str, process: str, flow: str, mtis: list[str]) -> str | None:
+    """Identify audit-only link logons without inventing a Tango transUId."""
+    if not process.upper().startswith("OPN") or not {"0800", "0810"}.intersection(mtis):
+        return None
+    if "001" not in parse_network_management_codes(text):
+        return None
+    reference = re.search(r"\bref:\s*(\d+)", flow, re.IGNORECASE)
+    timestamp = parse_timestamp(text)
+    if not reference or timestamp is None:
+        return None
+    return f"LOGON-{process}-{timestamp:%Y%m%d}-{reference.group(1)}"
+
+
 def transaction_matches_bank(transaction: Transaction, bank: str) -> bool:
     expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
     if bank in {"AKTIF/BKT", "AKTIF/BKTKOS"}:
         # The shared OPN process cannot distinguish these two acquirers.
-        return bool(transaction.acquirer_ids & expected_ids)
+        return bool(transaction.acquirer_ids & expected_ids) or (
+            not transaction.acquirer_ids
+            and "001" in transaction.network_management_codes
+            and bool({"0800", "0810"}.intersection(transaction.mtis))
+            and any(bank_audit_code_matches(bank, process) for process in transaction.process_names)
+        )
     return bool(transaction.acquirer_ids & expected_ids) or any(
         bank_audit_code_matches(bank, process_name)
         for process_name in transaction.process_names
@@ -1100,7 +1118,7 @@ def iter_marker_block_locations_from_file(
 ) -> Iterator[tuple[int, int, str]]:
     """Yield byte ranges and text for transaction blocks in a large audit."""
     separator = SEPARATOR_PREFIX.encode("ascii")
-    markers = (b"transUId", b"transUid")
+    markers = (b"transUId", b"transUid", b"networkManageCode")
     with path.open("rb") as handle:
         if path.stat().st_size == 0:
             return
@@ -1217,7 +1235,8 @@ def iter_input_blocks(
     total_bytes = sum(path.stat().st_size for path in input_paths)
     processed_bytes = 0
     last_reported_bytes = 0
-    target_pattern = build_uid_pattern(target_uids)
+    has_audit_logons = any(uid.startswith("LOGON-") for uid in target_uids or ())
+    target_pattern = None if has_audit_logons else build_uid_pattern(target_uids)
 
     def report(path: Path, force: bool = False) -> None:
         nonlocal last_reported_bytes
@@ -1232,7 +1251,7 @@ def iter_input_blocks(
             )
 
     for input_path in input_paths:
-        if target_uids:
+        if target_uids and not has_audit_logons:
             for block_text in iter_target_blocks_from_file(input_path, target_uids):
                 yield index, block_text
                 index += 1
@@ -1315,9 +1334,12 @@ def scan_transactions(
             not correlate_missing
             and "transUId" not in text
             and "transUid" not in text
+            and "networkManageCode" not in text
         ):
             continue
         block = parse_block(text, index)
+        if target_uids and block.trans_uid not in target_uids:
+            continue
         if block.trans_uid:
             if target_blocks_by_uid is not None:
                 target_blocks_by_uid[block.trans_uid].append((index, text))

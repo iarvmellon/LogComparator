@@ -1,6 +1,8 @@
 """Shared diagnostic metadata and conservative comparison helpers."""
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -30,6 +32,14 @@ def normalized(key: str, value: str) -> str:
 def different(left: AuditMessage, right: AuditMessage, key: str) -> bool:
     a, b = left.values.get(key), right.values.get(key)
     return bool(a and b and normalized(key, a) != normalized(key, b))
+
+
+def problem_display_text(problem: str) -> str:
+    """Hide severity labels in the GUI while keeping them for row coloring."""
+    return '; '.join(dict.fromkeys(
+        re.sub(r'^(?:(?:warning|error):\s*)+', '', part, flags=re.IGNORECASE)
+        for part in problem.split('; ') if part
+    ))
 
 
 def problem_row_tag(problem: str, spdh_rc: str, iso_rc: str, heartbeat: bool = False,

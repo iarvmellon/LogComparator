@@ -37,6 +37,51 @@ ALIASES = {
 }
 FIELD_NUMBERS = {4: 'amount', 7: 'transmission_time', 11: 'stan', 22: 'entry_mode', 37: 'rrn', 39: 'rc',
                  41: 'tid', 42: 'mid', 49: 'currency', 70: 'network_management_code', 90: 'original'}
+# Fixed-width fields requested by the application profile (decoded audit units).
+NUMERIC_LENGTHS = {3: 6, 4: 12, 5: 12, 6: 12, 7: 10, 11: 6, 12: 6,
+                   13: 4, 14: 4, 15: 4, 18: 4, 19: 3, 23: 3, 25: 2,
+                   26: 2, 49: 3, 50: 3, 51: 3, 70: 3, 90: 42}
+TEXT_LENGTHS = {37: 12, 38: 6, 41: 8, 42: 15, 43: 40}
+
+
+def validate_fixed_field(message, number, raw):
+    if number not in NUMERIC_LENGTHS and number not in TEXT_LENGTHS and number != 52:
+        return
+    raw = raw.strip()
+    wrapper = re.fullmatch(r'(asc|int|hex)<(.*?)>', raw, re.I)
+    encoding = wrapper[1].lower() if wrapper else 'decoded'
+    value = wrapper[2] if wrapper else raw
+    if not value.strip() or value.strip().lower() in {'n/a', 'na', 'not available'}:
+        return
+    if '*' in value or re.match(r'\w+<', value):
+        return  # Masked or opaque audit values cannot establish wire length.
+    label = f'DE{number}'
+    if number == 52:
+        # Only explicit hex exposes the PIN block byte length. Never retain its value.
+        if encoding == 'hex' and not re.fullmatch(r'[0-9A-Fa-f]{16}', value):
+            message.invalid_fields.add(label + ' length/format (expected 8 bytes)')
+        return
+    if number in NUMERIC_LENGTHS:
+        width = NUMERIC_LENGTHS[number]
+        if encoding == 'hex':
+            # Without a bank encoding profile, hex might be ASCII or BCD.
+            # Preserve the existing conservative exact-width BCD decoding policy.
+            return
+        valid = re.fullmatch(r'[0-9]+', value) and len(value) <= width
+        if encoding != 'int':
+            valid = valid and len(value) == width
+        if not valid:
+            message.invalid_fields.add(label)
+        return
+    if encoding in {'hex', 'int'}:
+        return
+    width = TEXT_LENGTHS[number]
+    # Text can be trimmed in decoded audits; only overlength significant data
+    # establishes a length error. Extra trailing transport padding is ignored.
+    if len(value.rstrip()) > width:
+        message.invalid_fields.add(label + f' length (maximum {width} characters)')
+
+
 NAME_KEYS = {alias: key for key, aliases in ALIASES.items() for alias in aliases}
 LINE_FIELD = re.compile(r'^\s*(?:(\d+)\.\s*)?([^:\r\n]+)\s*:\s*(.*?)\s*$', re.M)
 XML_FIELD = re.compile(r'<field\b[^>]*\bname=[\'"]([^\'"]+)[\'"][^>]*>(.*?)</field>', re.I)
@@ -54,6 +99,8 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
         de = re.fullmatch(r'de0*(\d+)', name)
         field_number = int(number) if number else int(de[1]) if de else None
         key = FIELD_NUMBERS.get(field_number) if field_number is not None else NAME_KEYS.get(name)
+        if field_number is not None:
+            validate_fixed_field(message, field_number, value)
         if not key:
             return
         value = value.strip()
@@ -64,7 +111,7 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
             if wrapped[1].lower() == 'hex' and key != 'bitmap':
                 # Explicit numeric ISO fields in these audits use packed decimal.
                 # Decode only an exact-width, decimal-only BCD representation.
-                digits = {4: 12, 7: 10, 11: 6, 49: 3, 90: 42}.get(field_number)
+                digits = NUMERIC_LENGTHS.get(field_number)
                 if not digits or len(value) != digits + digits % 2 or not re.fullmatch(r'[0-9]+', value):
                     return
                 if digits % 2:
