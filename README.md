@@ -30,6 +30,66 @@ C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs\<BANK>\<YYYY-MM-DD>
 
 ## Main workflow
 
+### Optional web interface (NiceGUI / Quasar UI)
+
+An additional browser interface is available in `web_app.py`. It uses NiceGUI
+3.18.0 with Quasar controls and QTable, with the desktop application's menu bar,
+grouped export options, Data and Time range panels, per-column text filters,
+sortable transaction table, selectable columns, and red/yellow/green row colors.
+One shared **Possible problem** column combines ISO/SPDH findings, removes
+duplicate messages, and hides `warning:` / `error:` prefixes while preserving
+severity for coloring. Ctrl + / Ctrl - use the browser's normal page zoom;
+**View** also provides table font-size controls.
+
+Install the optional packages once, then start from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-web.txt
+.\start_web.ps1
+# Or: .\.venv\Scripts\python.exe web_app.py
+```
+
+The browser opens at `http://127.0.0.1:8080`. Keep the launching terminal open;
+press Ctrl+C there to stop the server. Use `-Port 8081` / `--port 8081` if
+needed, or `-NoBrowser` / `--no-browser` to suppress opening a tab. The server
+binds only to this computer and does not publish logs to an external service.
+Each browser page has its own filters, source selection and export state.
+
+- **File > Import** accepts a local folder path on the server computer. Select
+  a bank and press **Load**. A folder with one Tango log date is detected
+  automatically; specify **Source date** for multiple dates or audit-only folders.
+  Compressed sources are extracted using the existing desktop helpers.
+- **SSH/SCP (UAT)** uses **Source date** and **Bank/Acquirer**, with the existing
+  SSH configuration and download functions. Downloads appear in the existing
+  local UAT directory structure. This operation requires access to UAT.
+- Text filters and the inclusive From/To range update the visible rows.
+  Timezone shifts displayed timestamps; filtering uses those displayed times.
+- **Open** previews selected exported logs in browser tabs inside a dialog.
+  **Compare** shows a unified text diff for exactly two selected transactions.
+  **Export** downloads selected rows, or all visible rows if none are selected;
+  multiple logs are downloaded as a ZIP. The browser version does not launch
+  Notepad++ or WinMerge. Temporary exports are removed when the server exits.
+
+The existing `main.py`, desktop GUI, parser and diagnostic code are unchanged by
+this addition. `web_services.py` adapts the existing parser/exporter and serializes
+access to its shared caches. Blocking operations run outside the web event loop.
+The optional web packages are not required by `dist\LogComparator.exe`, and the
+Desktop shortcut continues to use that fixed executable path.
+
+Web validation uses synthetic logs and does not contact UAT:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-web-test.txt
+.\.venv\Scripts\python.exe -m pytest test_web_interface.py -q
+```
+
+The tests cover loading, targeted export, date/timezone and text filters,
+combined diagnostics/color precedence, and NiceGUI page actions for loading,
+filtering, preview, comparison, and ZIP download. The page-action test uses
+NiceGUI's simulated-user environment; it is skipped by plain unittest.
+
+### Desktop interface
+
 Running `main.py` without local audit arguments starts the GUI:
 
 1. Open the main `LogComparator` application window.

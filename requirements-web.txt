@@ -1,0 +1,3 @@
+# Optional browser interface; the desktop application does not require this.
+-r requirements.txt
+nicegui==3.18.0
