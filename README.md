@@ -189,7 +189,7 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    from that same version and export it:
 
    ```powershell
-   docker build --platform linux/amd64 -t logcomparator:local .
+   docker build --platform linux/amd64 --build-arg BUILD_DESCRIBE="$(git describe --tags --always --dirty)" --build-arg BUILD_GIT_HASH="$(git rev-parse --short=12 HEAD)" -t logcomparator:local .
    docker save -o logcomparator.tar logcomparator:local
    ```
 
@@ -199,18 +199,20 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    separately; do not commit it to Git. Keep the server's `.env` and credentials
    outside Git as well.
 
-3. On Linux, pull the matching code/Compose version, load the archive and
+3. On Linux, load the archive and
    recreate the container without building or pulling an image:
 
    ```bash
-   git pull
    docker load -i logcomparator.tar
    docker compose up -d --no-build --pull never --force-recreate
    ```
 
    Preserve the server's existing `.env`, including `LOGCOMPARATOR_PORT=4020`
-   and its source paths/group ID. Git transfers the source files; `docker load`
-   installs the separately transferred image. Both must represent the same update.
+   and its source paths/group ID. Application-only updates do not require
+   `git pull`: the new application code is already inside the image.
+   If deployment files such as `compose.yaml` have also changed, update those
+   files with `git pull` (or transfer them separately) before recreating the
+   container. The Compose configuration must be compatible with the new image.
 
 4. Check the deployment and refresh the browser with Ctrl+F5:
 
@@ -224,6 +226,13 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
 
 A code change needs a new image build and archive. Changing only the published
 host port in Compose/`.env` does not require a new image or archive.
+
+The browser tab title shows `LogComparator <build version>` on the main page
+and transaction tabs. The Windows Docker build command above embeds the Git
+version and commit so the title identifies the installed image. For Compose
+builds, set `LOGCOMPARATOR_VERSION` and `LOGCOMPARATOR_GIT_HASH` in the local
+`.env` to the desired Git describe/commit values before building. Without build
+metadata, Docker images use the default `container` label in the title.
 
 ## Migration from the native UI
 

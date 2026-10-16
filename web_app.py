@@ -40,7 +40,7 @@ def health():
     return {'app': 'LogComparator', 'ui': 'web', 'version': core.APP_BUILD_DESCRIBE}
 
 
-@ui.page('/transaction/{source_id}')
+@ui.page('/transaction/{source_id}', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
 async def transaction_page(source_id: str, uid: str):
     entry = PREVIEW_SOURCES.get(source_id)
     if entry is None:
@@ -96,7 +96,7 @@ def download_uat(selected_date: str, bank: str, progress) -> Path:
         return download_uat_sources(selected_date, bank, core.ACTIVE_RUNTIME_SETTINGS.get().output.parent, progress)
 
 
-@ui.page('/')
+@ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
 def index():
     ui.add_css(CSS)
     loaded = None
