@@ -2,4 +2,6 @@
 # The browser UI and all its local assets are included in the executable.
 nicegui==3.18.0
 watchfiles>=1.0,<2
+paramiko>=3.5,<5
+scp>=0.15,<0.16
 -e .

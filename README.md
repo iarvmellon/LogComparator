@@ -39,13 +39,44 @@ another user's credentials. Refreshing the page starts a fresh workspace.
 
 ## Workflow and controls
 
-- **File > Import** opens a server-folder import dialog. Type a path or use
+- **File > Import local Logs** opens a server-folder import dialog. Type a path or use
   **Browse folders**, set the separate Audit folder if needed, choose the log
-  date and bank/acquirer and press **Load folder**. **Inspect dates and banks**
-  refreshes available choices. One date can be selected automatically; multiple
+  date and bank/acquirer and press **Load folder**. Available choices load
+  automatically when Import opens or source paths change. One date can be selected automatically; multiple
   dates require a selection. Compressed files are extracted into a writable
   cache without modifying the source directories. The Log/Audit fields show the chosen sources. A folder
   path refers to the server computer, including when accessed from another PC.
+  With a configured audit directory (Docker/Linux), the dialog uses the
+  configured log/audit directories automatically and shows date/bank choices
+  without path fields or folder browse buttons.
+- **File > Import remote logs** imports audit files from a configurable remote
+  server. Enter **Remote host (IP:port)** (port defaults to 22), **Remote
+  username**, **Remote password** and **Remote audit folder**, then choose
+  **Connect and list audits**. The default folder is
+  `/opt/tango/MLNPSP01/audit`; host/user/password start empty. For IPv6 with a
+  port, use `[address]:port`. On the first connection in this dialog, verify the
+  displayed SHA256 host fingerprint and choose **Trust this host fingerprint
+  and connect**. That fingerprint is pinned for subsequent listing/download
+  connections in the dialog; a changed key is rejected. Choose an available
+  **Remote log date** and **Remote Bank/Acquirer**, then **Download remote logs**.
+  The requested bank's OPN and shared PTMS audits load first; other banks download
+  in the background and become available through the bank combobox.
+  If a date contains PTMS/SPDH audits only, the bank selector offers the configured
+  banks and the parser applies transaction-level bank filtering after download.
+  Files are downloaded by SCP to a unique folder under the writable source
+  cache, with atomic publication of complete files. Date discovery uses the
+  audit filenames, so remote Tango log files are not required. Tango-only
+  diagnostics are unavailable when the import contains audits only.
+  Passwords are used in memory for the import/background download and are not
+  saved to settings or the image. Reopening the dialog requires entering them
+  again. The remote account must be able to list the folder through SFTP and
+  read the audit files through SCP; no sudo is used. The remote host needs its
+  SCP command and SFTP subsystem available. LogComparator uses Python Paramiko
+  and scp packages, so no SSH/SCP executable or Linux system package needs to
+  be installed in the LogComparator container. Connections originate from the
+  server/container, not the browser PC. The remote files remain unchanged.
+  This is a snapshot import: **Live update** follows the local downloaded cache,
+  not changes on the remote host. Import again for a new remote snapshot.
 - **File > SSH/SCP (UAT)**, when enabled, lists remote Tango log dates. Available dates have
   green dots; other dates are disabled. The Available dates dropdown and the
   selected date's filenames show what exists on UAT. Refresh dates reloads the
@@ -134,9 +165,14 @@ docker compose up -d --build
 docker compose logs -f logcomparator
 ```
 
-Open `http://<server-IP>:4020`. Use **File > Import** to select an available
-date and bank; the two source folders are prefilled. All local banks remain
-available through Bank/Acquirer. SSH menus and credential fields are disabled.
+Open `http://<server-IP>:4020`. Use **File > Import local Logs** to select an available
+date and bank. Configured server source folders are used automatically; the
+Import dialog omits folder path fields and folder browsing controls when an
+audit directory is configured (as in Docker/Linux). Available dates and banks
+load automatically each time Import opens; there is no inspection button. All local banks remain
+available through Bank/Acquirer. The legacy SSH/SCP (UAT) menu and its Settings
+credential fields are disabled; the separate Import remote logs feature remains
+available with its own connection fields.
 
 Docker publishes host TCP 4020 to container TCP 8080. The application and
 container continue listening on 8080; only the external port changes. Set
@@ -190,6 +226,7 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
 
    ```powershell
    docker build --platform linux/amd64 --build-arg BUILD_DESCRIBE="$(git describe --tags --always --dirty)" --build-arg BUILD_GIT_HASH="$(git rev-parse --short=12 HEAD)" -t logcomparator:local .
+   docker run --rm --entrypoint python logcomparator:local -c "import log_config; print(log_config.APP_BUILD_DESCRIBE)"
    docker save -o logcomparator.tar logcomparator:local
    ```
 
@@ -198,6 +235,8 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    `docker build -t logcomparator:local .` uses the default `container` label;
    copying the image to a Git checkout on Linux does not add version metadata.
    Run the build in the Windows Git checkout, with Git available on PATH.
+   Before transferring the archive, verify that the printed version is the
+   expected Git version, not `container`.
 
 2. Transfer the new `logcomparator.tar` to the project directory on the Linux
    server using your usual file-transfer method. The archive contains the
@@ -220,15 +259,35 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
    files with `git pull` (or transfer them separately) before recreating the
    container. The Compose configuration must be compatible with the new image.
 
-4. Check the deployment and refresh the browser with Ctrl+F5:
+4. Wait for the application to be ready before checking its version. A started
+   container does not necessarily mean the web server is ready: an immediate
+   `curl` can report `Connection reset by peer` during startup. The following
+   Bash commands try the health check up to 30 times, with a two-second pause
+   between attempts and a three-second timeout per request:
 
    ```bash
-   docker compose ps
-   docker compose logs --tail=100 logcomparator
-   curl http://127.0.0.1:4020/health
+   ready=false
+   for attempt in {1..30}; do
+     if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:4020/health; then
+       printf '\n'
+       ready=true
+       break
+     fi
+     sleep 2
+   done
+   if [ "$ready" = true ]; then
+     docker compose ps
+   else
+     echo "Application is not ready; inspect container status, logs and port mapping:"
+     docker compose ps
+     docker compose logs --tail=100 logcomparator
+     docker compose port logcomparator 8080
+   fi
    ```
 
-   Open `http://<server-IP>:4020`. Recreating the container preserves its mounted
+   After the health check succeeds, open `http://<server-IP>:4020` and use
+   Ctrl+F5. The published port is 4020 and the internal application port is 8080.
+   Recreating the container preserves its mounted
    log sources and named data volumes; do not use `docker compose down -v`.
    The health response's `version`, browser tab and About's Version field should
    show the Git build version, for example `v1.0.29-6-g1974451`. If they show
@@ -237,6 +296,20 @@ an Intel/AMD 64-bit Linux server (`linux/amd64`); use `linux/arm64` for ARM64.
 
 A code change needs a new image build and archive. Changing only the published
 host port in Compose/`.env` does not require a new image or archive.
+
+If an optional `git pull` is blocked because an untracked `logcomparator.tar`
+would be overwritten, first preserve the local archive outside the checkout:
+
+```bash
+mv logcomparator.tar "../logcomparator-backup-$(date +%Y%m%d-%H%M%S).tar"
+git pull
+```
+
+This resolves the file conflict only; it does not update the running container.
+Load the intended new archive and recreate the container using step 3. If an
+older commit tracked `logcomparator.tar`, remove it from Git tracking in a future
+commit (`git rm --cached -- logcomparator.tar`) and add `/logcomparator.tar` to
+`.gitignore`; continue transferring archives separately.
 
 The browser tab title shows `LogComparator <build version>` on the main page
 and transaction tabs. The Windows Docker build command above embeds the Git
@@ -252,7 +325,7 @@ and restarting an existing image does not change its version metadata.
 | Former UI function | Web equivalent |
 | --- | --- |
 | Native window and date dialogs | Browser page and Quasar calendar/time pickers |
-| Native folder chooser | File > Import > Browse folders |
+| Native folder chooser | File > Import local Logs > Browse folders |
 | SSH date/bank selection, including All | File > SSH/SCP (UAT) |
 | Background download for other banks | Background worker and bank combobox |
 | Table filters, columns, sorting, selection, colors | Quasar QTable and filter bar |
@@ -291,7 +364,7 @@ next annotated release tag and builds it after source changes have been committe
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-web-test.txt
-.\.venv\Scripts\python.exe -m pytest test_web_interface.py test_background_audits.py -q
+.\.venv\Scripts\python.exe -m pytest test_web_interface.py test_remote_logs.py test_background_audits.py -q
 .\.venv\Scripts\python.exe -m unittest discover -q
 node test_diff2html.js
 ```
@@ -299,6 +372,9 @@ node test_diff2html.js
 Python tests use synthetic source files and mocked SSH calls. They cover loading,
 combined diagnostics, time and text filtering, settings isolation, background
 publication, specific-transaction previews, comparison, export and bank switching.
+Remote tests use a loopback SSH/SFTP/SCP server to verify password authentication,
+fingerprint checks, discovery, real SCP downloads, atomic failure handling and
+background transfers without accessing a production host.
 The NiceGUI simulated-user test runs under pytest and is skipped by unittest.
 The Node development test checks the actual vendored diff2html renderer, escaping
 of log text and synchronized scrolling; Node is not needed by the server or EXE.

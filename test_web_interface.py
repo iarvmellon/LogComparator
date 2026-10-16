@@ -140,7 +140,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             (root / 'audit.OPNBISOBKT01.2026-10-14').replace(audits / 'audit.OPNBISOBKT01.2026-10-14')
             (logs / 'tango.log.2026-10-15').write_text('')
             for name, value in {'ENABLE_SSH': False, 'DEFAULT_IMPORT': logs,
-                                'LOCAL_AUDIT_DIR': audits, 'DEFAULT_OUTPUT': root / 'exports'}.items():
+                                'LOCAL_AUDIT_DIR': audits, 'DEFAULT_OUTPUT': root / 'exports',
+                                'DEFAULT_CACHE': root / 'cache'}.items():
                 stack.enter_context(patch('log_core.' + name, value))
             with patch('sys.argv', ['web_app.py', '--no-browser']):
                 simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
@@ -150,6 +151,11 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 await user.should_not_see(marker='ssh-menu')
                 user.find(marker='import-menu').click()
                 await user.should_see('Import local log folder', retries=100)
+                await user.should_not_see('Choose a folder on the computer running LogComparator.')
+                self.assertFalse(any(e.props.get('label') in ('Folder path', 'Audit folder (empty = same folder)')
+                                     for e in user.find(ui.input).elements))
+                self.assertFalse(any(e.props.get('label') in ('Browse folders', 'Browse audit folder', 'Inspect dates and banks')
+                                     for e in user.find(ui.button).elements))
                 self.assertTrue(max(user.find(ui.dialog).elements, key=lambda e: e.id).value)
                 dates = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Log date (auto for one date)')
                 for _ in range(100):
@@ -189,6 +195,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 with user:
                     await live_timer.callback()
                 self.assertEqual(len(table.rows), 4)
+
                 self.assertEqual(len(table.selected), 1)
                 self.assertEqual(inputs['From'].value, '2026-10-14 06:00:00')
                 self.assertEqual(inputs['TransactionType'].value, 'LOGON')
@@ -196,6 +203,42 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 with user:
                     await live_timer.callback()
                 self.assertEqual(len(table.rows), 4)
+
+                # Remote import is available even with the legacy UAT menu off.
+                from remote_logs import UnknownHostKey
+                from unittest.mock import Mock
+                import shutil
+                fixture = root / 'remote-fixture'
+                fixture.mkdir()
+                source_fixture(fixture)
+                remote_name = 'audit.OPNBISOBKT01.2026-10-14'
+                listing = Mock(side_effect=[UnknownHostKey('SHA256:test-host'), [remote_name]])
+
+                def copy_remote(connection, names, target, progress):
+                    self.assertEqual(connection.endpoint, '127.0.0.1:2222')
+                    self.assertEqual(connection.password, 'test-password')
+                    for name in names:
+                        shutil.copyfile(fixture / name, target / name)
+
+                transfer = Mock(side_effect=copy_remote)
+                with patch.dict(live_timer.callback.__globals__, list_remote_audits=listing, download_audits=transfer):
+                    user.find(marker='remote-import-menu').click()
+                    await user.should_see('Import remote logs')
+                    remote_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
+                    with user:
+                        remote_inputs['Remote host (IP:port)'].set_value('127.0.0.1:2222')
+                        remote_inputs['Remote username'].set_value('reader')
+                        remote_inputs['Remote password'].set_value('test-password')
+                    user.find('Connect and list audits').click()
+                    await user.should_see('SHA256:test-host', retries=100)
+                    user.find('Trust this host fingerprint and connect').click()
+                    await user.should_see('1 audit files; 1 dates available.', retries=100)
+                    self.assertEqual(listing.call_args.args[0].fingerprint, 'SHA256:test-host')
+                    user.find('Download remote logs').click()
+                    await user.should_see('Loaded transactions: 2', retries=100)
+                    transfer.assert_called_once()
+                    self.assertEqual(len(table.rows), 2)
+                    self.assertEqual(remote_inputs['Remote password'].value, '')
             finally:
                 await simulation.__aexit__(None, None, None)
 
