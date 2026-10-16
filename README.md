@@ -1,202 +1,233 @@
 # LogComparator
 
-LogComparator is a Windows desktop utility for loading TANGO logs from a local
-log folder or from SSH/SCP (UAT), then building complete, readable
-transaction flows from PTMS/SPDH and OPN/ISO audit streams.
+LogComparator loads TANGO logs and builds complete transaction flows from
+PTMS/SPDH and OPN/ISO audit streams. **The NiceGUI / Quasar web interface is now
+the only UI.** The former Tkinter window and its calendar/layout code have been
+removed. Parsing, transaction checks, CLI analysis and export formats are retained.
 
-The project directory is:
+## Start the application
 
-```text
-C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
-```
+Open `dist/LogComparator.exe` using the existing Desktop shortcut. It starts the
+web server and opens the browser. The executable remains at the fixed project
+path `dist/LogComparator.exe`; no Python, Node, Tkinter, WinMerge or Notepad++
+installation is needed to use the packaged application. The local diff2html
+JavaScript, CSS and license are included in the executable.
 
-The default generated-log directory is:
-
-```text
-C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs
-```
-
-The recommended import root is:
-
-```text
-C:\Users\j.arvanitis\Desktop\Tango\Import\<YYYY-MM-DD>
-```
-
-Generated files are organized under:
-
-```text
-C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs\<BANK>\<YYYY-MM-DD>
-```
-
-## Main workflow
-
-### Optional web interface (NiceGUI / Quasar UI)
-
-An additional browser interface is available in `web_app.py`. It uses NiceGUI
-3.18.0 with Quasar controls and QTable, with the desktop application's menu bar,
-grouped export options, Data and Time range panels, per-column text filters,
-sortable transaction table, selectable columns, and red/yellow/green row colors.
-One shared **Possible problem** column combines ISO/SPDH findings, removes
-duplicate messages, and hides `warning:` / `error:` prefixes while preserving
-severity for coloring. Ctrl + / Ctrl - use the browser's normal page zoom;
-**View** also provides table font-size controls.
-
-Install the optional packages once, then start from the project root:
+From source, run from the project root using the project virtual environment:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-web.txt
+.\setup.ps1
+.\.venv\Scripts\python.exe main.py
+# Alternatives:
 .\start_web.ps1
-# Or: .\.venv\Scripts\python.exe web_app.py
+.\.venv\Scripts\python.exe main.py --no-browser --port 8080
 ```
 
-Locally, open `http://127.0.0.1:8080`. Other computers on the same reachable
-network can open `http://<server-IP>:8080` (for example, use the server's Wi-Fi
-or Ethernet IPv4 address shown by `ipconfig`). `0.0.0.0` is the listening
-address, not the address to enter in another computer's browser.
-Keep the launching terminal open;
-press Ctrl+C there to stop the server. Use `-Port 8081` / `--port 8081` if
-needed, or `-NoBrowser` / `--no-browser` to suppress opening a tab. The server
-binds to `0.0.0.0` on port 8080 by default. Network access also requires the
-existing Windows Firewall and network routing to allow that connection; this
-change does not modify firewall rules. This interface has no sign-in, so users
-who can reach it can use its log access, downloads and existing UAT functions.
-Use it on a trusted internal network. It does not publish logs to a hosting service.
-Each browser page has its own filters, source selection and export state.
-Source loading actions are under **File**; the Data panel has no Load or SSH/SCP
-buttons.
+The server listens on `0.0.0.0:8080`. Locally, use `http://127.0.0.1:8080`;
+other computers can use `http://<server-IP>:8080` if network routing and the
+existing firewall allow the connection. Starting the executable again opens the
+already-running LogComparator server instead of starting a conflicting copy.
+Use `--port 8081` for another port. Keep the server process running; Ctrl+C in its
+console stops the server. **File > Close workspace** closes only that browser
+workspace so other users can continue working.
 
-- **File > Import** accepts a local folder path on the server computer. Select
-  a bank and press **Load folder** in the Import dialog. A folder with one Tango log date is detected
-  automatically. The Data panel has no Source date field; SSH dates are selected
-  in the SSH dialog. Local import expects a folder with a single Tango log date.
-  Compressed sources are extracted using the existing desktop helpers.
-- **File > SSH/SCP (UAT)** opens a calendar
-  and bank/acquirer dialog. It queries the UAT Tango log listing asynchronously:
-  dates with files have green dots and are selectable; other dates are disabled.
-  An **Available dates** dropdown lists every discovered date, and the filenames
-  for the selected date are shown below the heading. **Refresh dates** reloads
-  the listing. The source date is retained if available; otherwise the latest
-  available date is selected. Download stays disabled if listing fails or no
-  dated logs exist. Availability means a Tango log exists, matching the desktop
-  calendar; bank-specific audit availability is checked when downloading.
-  Choose a date and bank, then press **Download and load**; Cancel does not
-  contact UAT. Empty or invalid dates keep the dialog open with a readable
-  validation message. Downloads use the existing
-  SSH configuration and download functions. Downloads appear in the existing
-  local UAT directory structure. This operation requires access to UAT.
-- Text filters and the inclusive From/To range update the visible rows.
-  **From** and **To** each contain both date and time in one field:
-  `YYYY-MM-DD HH:MM:SS`, using 24-hour time (00–23), independent of the browser's
-  AM/PM locale settings. There are no separate Time fields. Loading a source
-  initializes the range to the full selected day, 00:00:00–23:59:59.
-  Click either field or its calendar icon to open a graphical calendar and
-  24-hour time picker (including seconds), then press **Apply**. Cancel keeps
-  the previous value.
-  Timezone shifts displayed timestamps; filtering uses those displayed times.
-  The web Timezone selector contains only UTC−3 through UTC+3 (including UTC).
-- **Open** opens the selected exported logs in separate browser tabs. Clicking
-  a TransUID link or double-clicking a transaction row also opens that specific
-  transaction in a new tab, using the current export options. Checkbox selection
-  remains available for exporting or comparing multiple transactions.
-  **Compare** shows a unified text diff for exactly two selected transactions.
-  **Export** downloads selected rows, or all visible rows if none are selected;
-  multiple logs are downloaded as a ZIP. The browser version does not launch
-  Notepad++ or WinMerge. Temporary exports are removed when the server exits.
+The interface has no login. Users who can reach it can access the server's log
+folders and configured UAT operations; run it on a trusted internal network.
+Settings, source selection, filters and export options are separate per browser
+workspace. SSH settings are applied in the worker context instead of changing
+another user's credentials. Refreshing the page starts a fresh workspace.
 
-After an SSH download, the requested bank stays selected and its transactions
-appear first. Other available bank audits for the same date download in the
-background, with a separate status line. Complete files are published atomically;
-the foreground bank's ready files are retained. Changing Bank/Acquirer reloads
-that bank from the same local folder without another SSH download. If a bank
-is still downloading, it loads when the background job finishes. Changing source
-cancels the previous background job. Concurrent background jobs for the same
-folder are serialized.
+## Workflow and controls
 
-Both desktop and web filter bars include **Possible problem**. It performs a
-case-insensitive substring search on the displayed combined ISO/SPDH diagnostic
-text, together with the other active filters. Clear filters resets it as well.
+- **File > Import** opens a server-folder import dialog. Type a path or use
+  **Browse folders**, set the separate Audit folder if needed, choose the log
+  date and bank/acquirer and press **Load folder**. **Inspect dates and banks**
+  refreshes available choices. One date can be selected automatically; multiple
+  dates require a selection. Compressed files are extracted into a writable
+  cache without modifying the source directories. The Log/Audit fields show the chosen sources. A folder
+  path refers to the server computer, including when accessed from another PC.
+- **File > SSH/SCP (UAT)**, when enabled, lists remote Tango log dates. Available dates have
+  green dots; other dates are disabled. The Available dates dropdown and the
+  selected date's filenames show what exists on UAT. Refresh dates reloads the
+  listing. Choose a bank or **All**, then **Download and load**. Listing errors
+  or an empty listing keep downloading disabled. Source date is kept inside
+  this dialog; there is no Source date field or Load/SSH button in Data.
+- A specific requested bank appears first. Other banks' audits for the same date
+  download in the background with a separate status line. Complete files are
+  published atomically and the foreground bank's ready sources are retained.
+  Bank/Acquirer switches to the downloaded local audits without another SSH
+  request; a pending bank loads after the background job finishes. Missing bank
+  audits are reported instead of showing another bank's rows. Selecting All
+  downloads all available banks before loading one. A source change cancels the
+  old background job; background jobs for one folder are serialized.
+- **From / To** each combine date and time. Click the field or calendar icon to
+  choose a date and a 24-hour clock time, including seconds, then Apply. Cancel
+  retains the old range. Bounds include the entire final second. Timezone is
+  restricted to UTC-3 through UTC+3. Changing it shifts displayed timestamps and
+  range bounds together to retain the selected instants.
+- Enable **Live update** in Data after importing a folder to follow growing
+  local logs. Filesystem notifications trigger updates for the selected date and
+  bank, reloading only after changes, additions or rotation. Events are grouped
+  for about 50–250 ms and checked by the UI every 250 ms; parsing time adds to
+  this delay. A five-second metadata check also catches missed events on network
+  shares and retries incomplete reads. Updates run
+  in a worker and preserve filters, From/To, timezone, sorting, pagination and
+  selected transaction IDs that remain visible. Updated responses/diagnostics
+  replace the corresponding rows. The selected date stays fixed across midnight;
+  import the next date explicitly. Disable the checkbox to pause updates.
+  Failed reads (including incomplete gzip files) retain the last successful list
+  and retry on the next check; the live status shows the error. This polls local
+  files only and does not repeat SSH downloads. Large files may take longer than
+  a few seconds to parse; scans never overlap within a workspace. Disabling live
+  updates, closing the workspace or deleting the browser session stops its watcher.
+- **Filters** combine case-insensitive substring searches. **Possible problem**
+  is always shown first at a wider size; it searches the displayed combined
+  ISO/SPDH text, without hidden severity prefixes. Other filters are TransUID,
+  STAN, RRN, AuthCode, Sequence_Number, TransactionType, TID, MID, AMT, RC_SPDH
+  and RC_ISO. **Edit > Clear filters** resets text filters.
+- Click a row or its checkbox to select it. **Edit** includes Select all visible
+  and Clear selection. Headers sort columns; the table supports horizontal
+  scrolling and pagination. **View > Columns / Filters** controls both column
+  and corresponding filter visibility, clearing a hidden filter. Possible
+  problem remains visible. **View** adjusts table font size; browser Ctrl +/-
+  zooms the whole interface. Controls wrap on narrower screens.
+- **Open**, a TransUID link, or double-clicking a row opens that transaction's
+  exported log in a separate browser tab, with Download log. Each link resolves
+  to that specific UID and current export options. Very old links expire after
+  32 source loads across workspaces; reopen the transaction from the main table.
+  For one selected row, the toolbar Open action is a direct browser link.
+  Opening several rows also presents individual links for each selected log.
+- **Export** downloads selected rows, or all visible rows when none are selected.
+  One transaction downloads as a log, multiple transactions as a ZIP. Copies are
+  also saved under the configured output folder in `<BANK>/<YYYY-MM-DD>`.
+- **Compare** requires exactly two selected rows. It uses **diff2html**, with
+  read-only side-by-side logs, colored insertions/deletions, line matching,
+  synchronized horizontal scrolling, previous/next difference controls and a
+  downloadable unified diff. It reports identical exports explicitly. It does
+  not run WinMerge or Monaco and does not change either original log. All
+  renderer resources are served by LogComparator, with no CDN dependency.
+- Right-click a row for **Open / Export / Compare**. If that row was not selected,
+  it becomes the current selection; an existing multi-selection is retained.
+  Open/Export are also under File and Tools. Compare is under Tools.
+- **Tools > Export options** and the toolbar share protocol selection
+  (SPDH+ISO / ISO / SPDH), Include Byte/Data, Tango Internal, Tango to Network
+  and Network to Tango. New previews and comparisons use the current options.
+- **File > Settings** changes output folder and, when SSH is enabled, SSH user and sudo password for the
+  current workspace. Browse output folder uses the web folder chooser. Leaving
+  the password field empty keeps the configured password; it is never prefilled
+  into browser HTML. **Help > About** shows the release, Git commit and author.
 
-The existing `main.py`, desktop GUI, parser and diagnostic code are unchanged by
-this addition. `web_services.py` adapts the existing parser/exporter and serializes
-access to its shared caches. Blocking operations run outside the web event loop.
-The optional web packages are not required by `dist\LogComparator.exe`, and the
-Desktop shortcut continues to use that fixed executable path.
+## Linux server with Docker
 
-Web validation uses synthetic logs and does not contact UAT:
+The Docker deployment reads existing server files directly, without SSH/SCP.
+`compose.yaml` mounts these directories read-only:
+
+- `/opt/tango/MLNPSP01/log` for Tango logs.
+- `/opt/tango/MLNPSP01/audit` for bank audit files.
+
+From the project directory on the Linux server, with Docker and Compose available:
+
+```sh
+cp .env.docker.example .env
+# Set TANGO_READ_GID in .env to an existing group that can read both directories.
+docker compose up -d --build
+docker compose logs -f logcomparator
+```
+
+Open `http://<server-IP>:8080`. Use **File > Import** to select an available
+date and bank; the two source folders are prefilled. All local banks remain
+available through Bank/Acquirer. SSH menus and credential fields are disabled.
+
+The container runs as UID/GID `10001:10001`, with the supplementary group
+`TANGO_READ_GID`. This user/group needs read access to the files and traversal
+access to their parent directories. The bind sources must already exist.
+Change `TANGO_LOG_DIR`, `TANGO_AUDIT_DIR` or `LOGCOMPARATOR_PORT` in `.env`
+if the server uses different locations or a different external port.
+
+Named volumes preserve exports (`/data/exports`), extracted gzip cache
+(`/data/cache`) and application state (`/data/state`) across container recreation.
+Source files are never extracted in place. `docker compose down` preserves
+these volumes; `down -v` deletes them. The image includes a `/health` check.
+No Linux system packages or SSH client are installed by the Dockerfile.
+
+For source runs, `LOGCOMPARATOR_LOG_DIR`, `LOGCOMPARATOR_AUDIT_DIR`,
+`LOGCOMPARATOR_OUTPUT`, `LOGCOMPARATOR_CACHE` and `LOGCOMPARATOR_ENABLE_SSH`
+configure the same paths and behavior. Linux defaults use the two `/opt/tango`
+directories above and disable SSH; Windows retains its existing defaults.
+
+## Migration from the native UI
+
+| Former UI function | Web equivalent |
+| --- | --- |
+| Native window and date dialogs | Browser page and Quasar calendar/time pickers |
+| Native folder chooser | File > Import > Browse folders |
+| SSH date/bank selection, including All | File > SSH/SCP (UAT) |
+| Background download for other banks | Background worker and bank combobox |
+| Table filters, columns, sorting, selection, colors | Quasar QTable and filter bar |
+| Open in Notepad++ / double-click | Specific transaction in a new browser tab |
+| Compare in WinMerge | Bundled diff2html side-by-side comparison |
+| Export logs to disk | Saved server exports plus log/ZIP browser download |
+| Right-click Open / Export / Compare | Row context menu |
+| Export options, settings, font size and About | File / Tools / View / Help menus |
+| Exit native window | File > Close workspace; Ctrl+C stops the shared server |
+
+## Installation and building
+
+For source/development use, install Python 3.10+ and Git for Windows. Run
+`setup.ps1` to create/reuse `.venv`, install application/build dependencies and
+register the project's PyInstaller asset hook. `requirements-web.txt` remains a
+compatibility alias for `requirements.txt`. OpenSSH `ssh` and `scp` on PATH,
+network access to UAT and permission for the existing sudo commands are required
+only for UAT operations. No Linux packages are required.
+
+Build from the project root with the project virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe update_build_info.py
+.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build_info.json;." main.py
+```
+
+The locally installed `logcomparator-web-ui` package supplies a PyInstaller hook
+that collects the custom component and diff2html assets. The standard NiceGUI
+hook includes Quasar, Vue and other browser resources. The finished executable
+must always be at `<project>/dist/LogComparator.exe`; the Desktop shortcut keeps
+pointing to this fixed path. `build/`, `dist/` and the generated spec are ignored.
+`build_executable.ps1` performs a local build. `create_release.py` publishes the
+next annotated release tag and builds it after source changes have been committed.
+
+## Validation
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-web-test.txt
-.\.venv\Scripts\python.exe -m pytest test_web_interface.py -q
+.\.venv\Scripts\python.exe -m pytest test_web_interface.py test_background_audits.py -q
+.\.venv\Scripts\python.exe -m unittest discover -q
+node test_diff2html.js
 ```
 
-The tests cover loading, targeted export, date/timezone and text filters,
-combined diagnostics/color precedence, and NiceGUI page actions for loading,
-filtering, preview, comparison, and ZIP download. The page-action test uses
-NiceGUI's simulated-user environment; it is skipped by plain unittest.
+Python tests use synthetic source files and mocked SSH calls. They cover loading,
+combined diagnostics, time and text filtering, settings isolation, background
+publication, specific-transaction previews, comparison, export and bank switching.
+The NiceGUI simulated-user test runs under pytest and is skipped by unittest.
+The Node development test checks the actual vendored diff2html renderer, escaping
+of log text and synchronized scrolling; Node is not needed by the server or EXE.
 
-### Desktop interface
+## Configuration and source cache
 
-Running `main.py` without local audit arguments starts the GUI:
+Constants and protocol/bank mappings are in `log_config.py`; parsing and export
+are in `log_core.py`. SSH defaults are used unless overridden in the workspace's
+Settings dialog. Do not expose repository credentials outside the intended team.
+The Windows default output folder is `C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs`;
+the Docker/Linux default is `/data/exports`.
+UAT sources are stored under `LogComparator/<YYYY-MM-DD>_UAT/<BANK>` or `All`.
+Past-date source files already present are reused; today's requested source files
+are refreshed. Local imports are parsed from their selected folder. Parsed-list
+caching is bounded and keyed by source path, modification time and size; source
+changes invalidate it. Blocking work runs outside the web event loop and shared
+parser caches are serialized. Download/preview variants use private temporary
+folders, then copies are atomically published in the configured output directory.
+Temporary variants are cleaned when the server exits; published exports remain.
 
-1. Open the main `LogComparator` application window.
-   The window opens maximized.
-   Use **Ctrl + +** / **Ctrl + -** to increase/decrease the interface font size
-   (including the transaction table). The numeric keypad is supported, as is
-   **Ctrl + =** for increasing the size without Shift. These actions are also
-   available under **View**. Font size changes apply for the current session.
-   The options and Data/Time range controls wrap onto additional rows when
-   the window becomes narrower, including when moved to a lower-resolution
-   monitor. Timezone and action buttons remain accessible.
-2. Use **File > Import** for local files, or **File > SSH/SCP (UAT)** for UAT
-   download.
-3. Use **Tools > Export options** to choose `SPDH+ISO`, `ISO`, or `SPDH`,
-   whether byte/data sections are included, and which audit blocks are exported.
-4. The generated-file and byte/data options are also available in the options
-   bar directly below the menu. `Open`, `Export`, and `Compare` are also
-   available under the **Tools** menu.
-5. For `Log folder`, use **File > Import** to select a local folder that
-   contains the daily Tango log, PTMS audit, and selected bank OPN audit,
-   compressed or uncompressed. No calendar is shown for this mode; the date is
-   read from the folder's `tango.log...` filename. The selected path appears in
-   the read-only `Log folder` field.
-6. For `SSH/SCP (UAT)`, a separate calendar window opens automatically after
-   the remote `tango.log*` list is loaded.
-   Each time it opens, it displays the current local month and selects today.
-   Available log dates remain highlighted; select a highlighted date to continue.
-7. Select a highlighted date and a bank/acquirer in the SSH/SCP window, then
-   press **OK**. Only the selected day's `tango.log*`, `audit.PTMS...`, and the
-   OPN audit family mapped to that bank/acquirer are downloaded and extracted
-   under `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`. Select `All` to download and
-   extract every OPN audit file for the date.
-   Missing UAT source families are skipped: loading and export continue with
-   the available files, even when PTMS, the selected bank OPN audit, or Tango
-   is absent. The selected calendar date is used for loading transactions.
-   If no UAT source files are found at all, the application reports that fact.
-   Results contain only the data available in the downloaded files.
-   The extracted folder path is written into the `Log folder` field.
-   Progress is shown in the bottom-right progress bar of the main window while
-   files are downloaded and extracted.
-8. A specifically downloaded bank/acquirer is placed automatically in the main
-   `Bank/Acquirer` combobox and its transaction list is loaded immediately,
-   without requiring a second selection. With `All`, select one of the available
-   banks in the main window. Optionally enter
-   `TransUID`, `STAN`, `RRN`,
-   `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`, `AMT`,
-   `RC_SPDH`, or `RC_ISO` filters. The bank list
-   contains all configured banks/acquirers, including `NEXI/COSMOTE`, once
-   a source folder is selected.
-   After a bank/acquirer is selected, the transaction list is populated.
-9. Locate the daily Tango log, PTMS audit, and selected bank OPN audit.
-10. Use the cached/extracted source files for parsing.
-11. Parse all selected audit files as one chronological dataset.
-12. Group records into complete transaction flows.
-13. Press `Export` or use **File > Export** to create one `.log` file for
-    every selected transaction/row that matches the filters. The main window
-    remains open and reports completion or errors in the GUI.
-14. Select one or more transaction rows and press `Open` to export them and open
-    the generated `.log` files in Notepad++.
-15. Select exactly two transaction rows to enable `Compare`; pressing it exports
-    both logs and opens them in WinMerge.
+## Diagnostic behavior
 
 Large audit files are scanned with memory mapping. The transaction-list loader
 decodes only blocks containing a transaction ID and retains transaction metadata
@@ -221,14 +252,14 @@ duplicate detection, and original-transaction lookup. SPDH original lookup uses
 explicit original STAN or terminal/sequence references instead.
 This checks all observed ISO RRNs, including response values, before bank and
 table filters. Repeated occurrences within one transaction are not duplicates.
-When both problems apply, both messages appear in the corresponding protocol column.
+When both problems apply, both messages appear in the shared Possible problem column.
 
-Diagnostic rules are separate from the GUI and core log parser:
+Diagnostic rules are separate from the web interface and core log parser:
 
 - `iso_checks.py`: ISO field extraction and checks.
 - `spdh_checks.py`: SPDH field extraction and checks.
 - `tango_checks.py`: streaming Tango diagnostic detection and exact transaction matching.
-- `transaction_checks.py`: RRN checks and orchestration of the two protocol columns.
+- `transaction_checks.py`: RRN checks and orchestration of the ISO/SPDH diagnostics.
 - `diagnostic_common.py`: shared metadata, comparisons, original lookup, and row severity.
 - `emv_checks.py`: shared basic EMV extraction, format checks, and completeness warnings.
 
@@ -443,380 +474,6 @@ or the existing `update_build_info.py` command. The executable retains its
 embedded version until rebuilt. No automatic tagging workflow is used.
 
 Progress, errors, and completion statistics are printed in the console.
-
-## GUI controls
-
-### Environment
-
-The source is selected as follows:
-
-- `Log folder`: use **File > Import** to select a local folder with the source files. The
-  folder should contain one daily `tango.log...` file, one
-  `audit.PTMS...` file, and one selected-bank `audit.OPN...` file for the
-  target date. Place the files beforehand under
-  `C:\Users\j.arvanitis\Desktop\Tango\Import\<YYYY-MM-DD>` and select that
-  folder directly. Files may be plain text, `.gz`, or `.gzip`; compressed files
-  are extracted there before transactions are scanned. No import copy is made.
-- `SSH/SCP (UAT)`: use the SSH/SCP workflow. Selecting a calendar date downloads
-  the selected bank's sources first into `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`.
-  Its transactions load immediately while a background worker downloads and
-  extracts the remaining PTMS and OPN audit files for all banks on the same date
-  into that folder. A separate status line shows background progress or errors.
-  Completed files become available when switching banks; if another bank is
-  selected during the download, its transaction list reloads when the worker finishes.
-  The worker reuses the sources prepared for the selected bank and existing files
-  for historical dates. Other files for today's date are refreshed. Downloads and
-  extraction use a temporary directory so partial files are not scanned or exported.
-  Changing the SSH date/bank selection or leaving the source cancels the previous
-  background job after its current transfer. Selecting `All` downloads all sources
-  in the initial download step.
-
-Imported `.gz` and `.gzip` files are extracted inside the selected folder.
-The scanner then reads the plain decompressed files, not the compressed files. During
-export, source files are copied into the exported output `source` directory
-before analysis. If both plain and compressed versions of the same source file
-are present, the plain file is preferred to avoid duplicate audit blocks.
-Numbered Tango filenames created during copying, such as
-`tango.log.2026-07-08 1.gz`, are recognized as logs for `2026-07-08`; `.1`,
-`_1`, and `-1` suffix variants are also accepted.
-
-Numbered compressed PTMS parts are kept as separate inputs. For example,
-`audit.PTMSMLN01.2026-07-08.gz` and
-`audit.PTMSMLN01.2026-07-08.1.gz` are extracted separately and both
-decompressed files are included in transaction analysis. The same applies to
-the `.gzip` extension. If a gzip trailer is incomplete but valid log lines can
-be recovered, the recovered content is retained and included in the analysis.
-
-After a folder is extracted and validated successfully, the GUI displays a
-**Folder loaded** confirmation with the selected path and the instruction
-`Folder loaded. Please select the bank.` in both the dialog and status bar.
-
-For `Log folder`, the main window shows a read-only folder path field. The
-folder must contain one daily log set; if multiple `tango.log...` dates are
-present, the run is rejected so the output date is not ambiguous.
-
-If import validation fails, the **Import failed** dialog lists only the missing
-source files. When a Tango log date is available, the expected PTMS and OPN
-patterns include that exact date, for example `audit.PTMS*.*2026-07-13*`. The
-validation also rejects an audit file that exists only for a different date.
-
-For `SSH/SCP (UAT)`, the calendar opens automatically in a separate window when
-the mode is selected. Choose a highlighted date and a bank/acquirer, then press
-**OK**. The matching Tango log, PTMS audit, and selected bank's OPN audit family
-are downloaded and extracted. Select `All` when every OPN audit for the date is
-needed. A specific selected bank is populated automatically in the main window;
-after `All`, choose a bank from the main Bank/Acquirer list. The extracted
-`<YYYY-MM-DD>_UAT\<BANK>` or `<YYYY-MM-DD>_UAT\All` path is written into the
-`Log folder` field. Use **File > SSH/SCP (UAT)** to choose another date or bank.
-
-### Calendar
-
-The calendar is used only for `SSH/SCP (UAT)` and opens in a separate window.
-Only highlighted dates can be selected, and a Bank/Acquirer selection is
-required before **OK** can continue. The download contains only:
-
-- `tango.log*`
-- `audit.PTMS...`
-- the `audit.OPN...` family mapped to the selected bank/acquirer
-
-Selecting `All` downloads and extracts all matching `audit.OPN...` files for
-the selected date.
-
-The files are extracted into `LogComparator\<YYYY-MM-DD>_UAT\<BANK>`. For a
-past date, each file already present in that final folder is not downloaded
-again; no separate download cache is created. Files for today's date are always
-downloaded and extracted again so the folder contains the latest audit data.
-
-### Bank/Acquirer
-
-The bank controls the OPN audit process and the bank-filtering rules.
-It is disabled until a source is available: import a folder with
-**File > Import**, or select an SSH/SCP date first. The `TransUID`,
-`STAN`, `RRN`, `AuthCode`, `Sequence_Number`, `TransactionType`, `TID`, `MID`,
-`AMT`, `RC_SPDH`, and `RC_ISO` filter fields are disabled in the same
-way.
-
-The bank list shows all configured banks/acquirers once a source folder is
-selected, including `NEXI/COSMOTE`. Missing bank audit files do not hide
-choices from the list. Transactions still require matching source data.
-Both Bank/Acquirer dropdowns show all choices without scrolling, including
-the final `NEXI/COSMOTE` entry after `All` in the SSH/SCP dialog.
-
-| GUI bank | OPN process |
-| --- | --- |
-| CASYS/STOPANSKA | OPNBISOCAS01 |
-| CASYS/FIBANK | OPNBISOCAS01 |
-| CASYS/RUBICON | OPNBISOCAS01 |
-| AKTIF/BKT | OPNBISOBKT01 (acquirer ID 050) |
-| AKTIF/BKTKOS | OPNBISOBKT01 (acquirer ID 065) |
-| EURONET/OTP | OPNRENOTP01 family, for example OPNRENOTP01 and OPNRENOTP02 |
-| NEXI/ALPHA | OPNBISOA01 |
-| BORICA/PROCREDIT | OPNWAY4B01 |
-| OPENWAY/NBG | OPNWAY4N01 |
-| EUROBANK | OPNBISOE01 |
-| NEXI/COSMOTE | OPNBISOC01 |
-
-The displayed name is `NEXI/COSMOTE` (previously `COSMOTE/NEXI`). After
-changing bank mappings in `log_config.py`, rebuild and open
-`dist/LogComparator.exe` to use the updated names and bank list behavior.
-For `NEXI/COSMOTE` transaction data, import a folder containing
-`audit.OPNBISOC01.<date>` (with or without a `.log` suffix)
-(or another numbered instance in the `OPNBISOC` family). Its acquirer ID
-is `061`. Build using the project's `.venv\Scripts\pyinstaller.exe` so
-the executable includes the installed `tkcalendar` dependency.
-
-For banks other than `AKTIF/BKT` and `AKTIF/BKTKOS`, a transaction is retained
-when it contains either the selected OPN process or a configured acquirer
-identifier for that bank. This
-prevents, for example, an OTP PTMS-only flow from being written into
-`CASYS_FIBANK`.
-
-`AKTIF/BKT` and `AKTIF/BKTKOS` are separate choices. Both use the
-`OPNBISOBKT01` audit family, but transaction lists and exports distinguish
-them by acquirer ID: `050` for `AKTIF/BKT` and `065` for `AKTIF/BKTKOS`. The shared process
-name alone does not assign a transaction to either bank; a matching acquirer
-ID is required.
-For example, an `acqId=065` transaction in `audit.OPNBISOBKT01.<date>`
-appears under `AKTIF/BKTKOS`, not under `AKTIF/BKT`. Transactions without
-either matching acquirer ID are omitted from both lists.
-
-### Transaction List
-
-Selecting a bank/acquirer scans the active source folder and shows the matching
-transactions in a table with:
-
-- Date/Time
-- transUid
-- RRN
-- STAN
-- AuthCode
-- Sequence_Number
-- TransactionType
-- TID
-- MID
-- AMT
-- RC_SPDH
-- RC_ISO
-
-`Close_Batch` and `Generate_Key` also appear green when they contain only
-SPDH messages, each PTMS process has both a request and response, and all
-responses have SPDH RC `000`. No ISO exchange is required. Declined or incomplete
-exchanges are not marked green. Diagnostic errors/warnings still override green.
-
-Rows have a green background when both `RC_SPDH` is `Approved(000)` and
-`RC_ISO` is `Approved(00)`. A missing or non-approved response in either
-column leaves the row with its normal background. Highlighting is preserved
-when filtering, sorting, or reloading cached transactions.
-Each RC column shows `Unknown` until a response containing a response code
-is recorded for that protocol. Request defaults such as `000`/`00` and
-internal messages are ignored. ISO requires an OPN `NETWORK-->TANGO`
-response; SPDH requires a PTMS `TANGO-->NETWORK` response.
-
-| RC_SPDH | RC_ISO | Row background |
-| --- | --- | --- |
-| Approved(000) | Approved(00) | Green |
-| Unknown | Approved(00) | Normal |
-| Approved(000) | Unknown | Normal |
-| Unknown | Unknown | Normal |
-| Any decline | Any value | Normal |
-| Any value | Any decline | Normal |
-
-`Unknown` applies independently to each protocol. A request containing a
-default approval code does not establish that a response was received.
-
-Click any column header to sort the displayed rows by that column. The table
-supports selecting one or more rows. If rows are selected when `Export` runs,
-only those selected transUIDs are exported. Explicit row selection takes
-precedence over active text filters, so every selected TRX is written to a
-separate `.log` file even when a text filter contains a partial value. While
-the list is being built, the
-bottom-right progress bar shows `Load transactions` with a determinate
-percentage. Loaded rows are cached per bank/date/source-file fingerprint so
-returning to the same selection is fast. The transaction-list scan uses an
-in-memory fast path that extracts only audit blocks containing `transUId` and
-skips uncorrelated no-`transUId` blocks. For speed, the list parser reads only
-the fields needed by the table and filters, and ignores the heavy `Raw data`
-payload while building rows. The same scan records audit block byte offsets,
-so selected-row `Open`, `Export`, and `Compare` can seek directly to every
-selected transaction without rescanning very large audit files. Full-day
-exports still perform complete correlation for the generated `.log`.
-Every explicitly selected TRX produces an output file even when the active
-protocol or direction options exclude all of its audit blocks; in that case
-the file still contains the available transaction summary and Tango lines.
-
-When a bank/acquirer has more than one OPN audit file for the same date, all
-files in the same numeric OPN family are loaded together. For example,
-`EURONET/OTP` maps to the `OPNRENOTP01` family, so `audit.OPNRENOTP01...`,
-`audit.OPNRENOTP02...`, and other matching `OPNRENOTP##` files are included when
-they exist.
-
-`Open` exports the selected row(s) first, then opens the generated `.log` files
-with Notepad++. Multiple selected rows are exported to separate files and all
-of them are passed to the same Notepad++ launch. `Compare` is enabled only when
-exactly two rows are selected; it
-exports both logs and opens them in WinMerge. The program looks for
-`notepad++.exe` and `WinMergeU.exe` in `PATH` and in the standard 32-bit/64-bit
-Program Files install folders. Selected-row `Open` and `Compare` use a targeted
-memory-mapped export path that searches directly for the selected `transUId`
-values. It decodes only matching audit blocks instead of loading multi-GB audit
-files into RAM, so comparing two selected rows remains responsive.
-For a selected-row export, the first targeted audit lookup temporarily caches
-only that transaction's matching blocks. File generation reuses those blocks
-instead of scanning the same multi-GB audits a second time, and matching Tango
-lines are collected with streaming I/O.
-The initial transaction-list scan also records the byte offsets of each block.
-Later single-row exports seek directly to those offsets, avoiding even the
-first full-file search when the list has already been loaded.
-
-The `Timezone` combo changes only how the `Date/Time` column is displayed. The
-source timestamp is treated as UTC; choosing `UTC+1`, `UTC+2`, `UTC+3`,
-`UTC-1`, `UTC-2`, or `UTC-3` shifts the displayed value without changing the
-raw parsed data, filters, or exported logs.
-
-The TransUID, RRN, STAN, AuthCode, Sequence_Number, TransactionType, TID, MID,
-AMT, RC_SPDH, and RC_ISO fields also act as live filters for the transaction
-table. `Sequence_Number` is read from audit values such as
-`[0x1C68] Sequence_Number : asc<0010090800>`.
-`TransactionType` is resolved from the current TANGO/ISO MTI and displays
-`Unknown` when the MTI is missing or unrecognized. TANGO `4820` is
-`DCC Inquiry`, including BKT/BKTKOS flows whose ISO message is `0800`/`0810`.
-Processing code `910000` alone does not identify DCC and must not override
-LOGON/ECHO evidence. Explicit message
-descriptions distinguish `LOGON` and `ECHO`; configured echo MTIs are
-also recognized. An otherwise unclassified `0800` is
-`Network_Management_Request`, never automatically `Logon`.
-Processing codes such as `000000` are not transaction names and are never
-displayed as synthetic `ProcessingCode_...` types. The current MTI takes priority
-over `originMti`/`tgOriginMti`; for example, a `4554` referencing an original
-`4530` is displayed as `Purchase_Void`, and `4581` is displayed as
-`Purchase_Void_Reversal`.
-Double-clicking a transaction row exports its flow and opens the generated log
-in Notepad++. Right-clicking a row opens a context menu with `Open`, `Export`,
-and `Compare`; `Compare` is enabled only when exactly two rows are selected.
-Text filters use a short 400 ms debounce. Typing another character cancels the
-pending refresh, so a large transaction table is rebuilt only after input
-pauses instead of once for every keystroke.
-All transaction text-filter controls are grouped inside a bordered `Filters`
-area. The separate `Time range` area remains on the upper source row.
-
-Before the `TransUID` filter, permanently visible `From` and `To` controls show
-the year, month, day, hour, minute, and second of the minimum and maximum loaded
-timestamps. The date is selected with a GUI calendar and `HH:MM:SS` with
-dropdowns. The selected inclusive range acts as a live filter and follows the
-timezone selected in the GUI.
-After loading, the range initially covers the complete log day, from
-`00:00:00` through `23:59:59`, rather than only the first and last transaction
-times.
-The `Log folder` field expands into the available horizontal space. The
-`From`, `To`, and `Timezone` controls are grouped in a separate bordered
-`Time range` area that aligns with the right side of the upper row.
-`Log folder` and `Bank/Acquirer` are grouped together in a bordered `Data`
-area beside `Time range`.
-The short `From` and `To` labels appear inline immediately before their date
-and `HH:MM:SS` controls rather than above them.
-Changing `Timezone` converts the visible `From` and `To` values along with the
-table's `Date/Time` values. For example, changing from `UTC` to `UTC+3` adds
-three hours to both displayed bounds while preserving the same absolute range.
-On initial loading, transaction timestamps are converted to the active
-timezone first. `From` is then set to `00:00:00` on the first resulting local
-date and `To` to `23:59:59` on the last resulting local date.
-
-### TransUID
-
-The TransUID, STAN, RRN, AuthCode, Sequence_Number, TransactionType, TID, MID,
-AMT, RC_SPDH, and RC_ISO fields are optional:
-
-For ISO audit records, `MID` also recognizes `cardAcceptorId`, while `AMT`
-prioritizes `transactionAmt` over auxiliary nested amount fields.
-
-- Empty fields: export every transaction that matches the selected bank.
-- Filled fields: export only transactions matching all filled values.
-
-Use **View > Columns / Filters...** to choose which transaction fields are
-visible. Each checked item appears both as a table column and as a filter. When
-an item is unchecked, its column and filter are hidden and any value in that
-filter is cleared.
-
-A targeted run does not create `NO_TRANSUID.log` and does not delete or
-rewrite unrelated existing transaction files.
-
-### Generated Files
-
-The generated file type is selected from **Tools > Export options** or
-from the `Generated files` controls below the menu:
-
-- `SPDH+ISO`: write both PTMS/SPDH and OPN/ISO audit blocks.
-- `ISO`: write only OPN/ISO audit blocks.
-- `SPDH`: write only PTMS/SPDH audit blocks.
-
-When a protocol is selected, only matching audit blocks are written inside each
-exported transaction file. The unassigned `NO_TRANSUID.log` file is not produced
-for protocol-filtered runs.
-
-### Byte/Data
-
-The same **Tools > Export options** menu and the `Byte/Data` checkbox
-below the menu control verbose payload sections:
-
-- `Include byte/data`: keep the full detailed data sections in full
-  transaction logs.
-- `Exclude byte/data`: remove `Raw data (hex):` and `Bus data:` sections from
-  exported logs.
-
-`Byte/Data` starts disabled when the GUI opens and can be enabled before export.
-
-When `Exclude byte/data` is selected, `Raw data (hex):` and `Bus data:` are
-removed from the exported `.log`.
-
-The audit block checkboxes beside `Byte/Data` control which block categories are
-written into the exported `.log`:
-
-- `Tango Internal`: internal TANGO request/response audit blocks.
-- `Tango->Network`: outgoing external audit blocks.
-- `Network->Tango`: incoming external audit blocks.
-
-`Tango Internal` starts disabled when the GUI opens. `Tango->Network` and
-`Network->Tango` start enabled.
-
-## Source cache
-
-For `SSH/SCP (UAT)`, source files are downloaded and extracted under:
-
-```text
-LogComparator\<YYYY-MM-DD>_UAT\<BANK>
-```
-
-Exported transaction logs for UAT are written under:
-
-```text
-LogComparator\<BANK>\<YYYY-MM-DD>
-```
-
-For both `Log folder` and `SSH/SCP (UAT)`, source files are copied under:
-
-```text
-LogComparator\<BANK>\<YYYY-MM-DD>\source
-```
-
-The bank name is made Windows-safe, so `CASYS/FIBANK` becomes
-`CASYS_FIBANK`.
-
-For `Log folder`, if a basename already exists locally, the copy is skipped:
-
-```text
-Using existing file: ...
-```
-
-If a `.gz` or `.gzip` file imported through `Log folder` already has a
-decompressed sibling, decompression is also skipped:
-
-```text
-Using existing decompressed file: ...
-```
-
-The `SSH/SCP (UAT)` calendar skips files already present in the final folder for
-past date/bank combinations. Today's files are always downloaded and extracted
-again because the active audit files can still change during the day.
 
 ## Transaction correlation
 
@@ -1096,197 +753,27 @@ Filter by Sequence_Number in local mode:
 .\.venv\Scripts\python.exe .\main.py audit.file1 audit.file2 --sequence-number 0010090800 -o C:\path\to\output
 ```
 
-Without positional audit files, `main.py` opens the GUI.
+Without positional audit files, `main.py` starts the web interface.
 
-## Installation
-
-Requirements:
-
-- Windows with Python 3.10 or newer (including Tkinter) and Git for Windows.
-- Python packages from `requirements.txt`.
-- Notepad++ installed. It is required for the `Open` action.
-- WinMerge installed. It is required for the `Compare` action.
-- The Notepad++ **EnhanceAnyLexer** plugin installed. It is required for the
-  supplied color highlighting rules.
-
-Additional `SSH/SCP (UAT)` requirements:
-
-- Windows OpenSSH `ssh` and `scp` on `PATH`.
-- Network access to the configured server.
-- Permission to run the required remote commands through `sudo`.
-
-Setup:
-
-```powershell
-cd C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
-.\setup.ps1
-python main.py
-```
-
-After cloning, run `setup.ps1` from the cloned project directory. It creates
-or reuses `.venv`, verifies Python and Tkinter, installs application and build
-dependencies from `requirements.txt` and `requirements-build.txt`, and generates
-`build_info.json`, then activates `.venv` in the current PowerShell session.
-It does not publish tags or build the executable. Use `./setup.ps1 -Python "C:\path\to\python.exe"`
-to choose Python when creating the environment. If PowerShell blocks scripts,
-run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and then
-`./setup.ps1` in the same PowerShell window.
-Install Notepad++, WinMerge, and EnhanceAnyLexer separately using the instructions
-below. Run `./build_executable.ps1` to build locally, or commit source changes
-and run `.\.venv\Scripts\python.exe create_release.py` to publish and build a release.
-
-## Configuration
-
-The following values are configured near the top of `log_core.py`:
-
-- SSH host, port, user, and timeout.
-- Remote Tango log and audit directories.
-- Local output root.
-- Bank-to-OPN mappings.
-- Bank acquirer identifiers.
-- TANGO/ISO MTI descriptions.
-- ISO/SPDH response-code descriptions.
-- Correlation window.
-
-Security note: the sudo password is currently stored as plain text in
-`log_core.py`. Keep the repository and its copies appropriately protected.
-
-## Notepad++ EnhanceAnyLexer
-
-Colored log highlighting requires the **EnhanceAnyLexer** Notepad++ plugin.
-The exported log files remain plain text and can be opened without the plugin,
-but the blue and red highlighting described below will not be available.
-
-### Plugin installation
-
-Use a Notepad++ version supported by EnhanceAnyLexer. The plugin architecture
-must match the installed Notepad++ architecture: use the 64-bit plugin with
-64-bit Notepad++ and the 32-bit plugin with 32-bit Notepad++. Installing through
-Plugins Admin is recommended because it selects a compatible plugin build. If
-EnhanceAnyLexer does not appear in Plugins Admin, update Notepad++ to a current
-supported release first.
-
-1. Open Notepad++.
-2. Select **Plugins > Plugins Admin**.
-3. Search for **EnhanceAnyLexer** in the **Available** tab.
-4. Select the plugin and press **Install**.
-5. Allow Notepad++ to restart when requested.
-
-### Color configuration
-
-The repository includes the ready-to-use configuration file:
-
-```text
-EnhanceAnyLexerConfig.ini
-```
-
-Copy it to the EnhanceAnyLexer configuration directory for the current Windows
-user, replacing the existing file when present:
-
-```text
-C:\Users\j.arvanitis\AppData\Roaming\Notepad++\plugins\config\EnhanceAnyLexer\EnhanceAnyLexerConfig.ini
-```
-
-The equivalent generic path is:
-
-```text
-%APPDATA%\Notepad++\plugins\config\EnhanceAnyLexer\EnhanceAnyLexerConfig.ini
-```
-
-After copying the file:
-
-1. Restart Notepad++ completely.
-2. Open an exported `.log` file.
-3. Ensure its Notepad++ language is **Normal text**, because the rules are under
-   the `[normal text]` section of the configuration.
-4. If an already-open log does not refresh, close and reopen its tab or switch
-   to another tab and back.
-
-When updating the configuration later, copy the repository version to the same
-directory again and restart Notepad++.
-
-### Configured colors
-
-It uses exactly two BGR color values because `use_rgb_format=0`:
-
-- `0xFF0000`: blue.
-- `0x0000FF`: red.
-
-Blue highlighting covers:
-
-- Field names `responseCode`, `resultCode`,
-  `retrievalReferenceNumber`, and `MTI`.
-- The entire header line `RRN: <value>`.
-- The entire line containing `transUId`.
-- The entire decoded line `responseCode : asc<xx>` by default.
-
-Red highlighting overrides blue for:
-
-- Every mapped ISO/SPDH decline response code.
-- Declined `Internal result Code`, `RC_SPDH`, and `RC_ISO` summary lines.
-- Full decoded decline lines such as `responseCode : asc<96>`.
-- External ISO lines whose final RC is not `00`.
-- External SPDH lines whose final RC is not `000`.
-- `resultCode=3919`.
-- `resultCode=3090`.
-
-Approved response codes `00`, `000`, and `953` are excluded from the red
-decline rule.
-
-EnhanceAnyLexer supports only text foreground recoloring. It cannot make only
-the red regex matches bold. Selective red+bold styling requires a different
-lexer or a scripting plugin.
-
-After changing the config, reactivate the Notepad++ buffer or restart Notepad++
-if highlighting does not refresh.
-
-## Troubleshooting
-
-### A selected transaction has only PTMS/SPDH
-
-The transaction may have failed validation before reaching OPN. Check the Tango
-lines for a critical result code and confirm whether an OPN network block exists.
-
-### A Financial_Response appears without OPN
-
-Confirm bank filtering. A PTMS transaction can belong to another route, such as
-`acqId=063 / OPNRENOTP01`, and must not be included in a CASYS/FIBANK run.
-
-### Unknown_MTI
-
-The flow contains no MTI present in the business TANGO or ISO mapping. Internal
-security/action MTIs are not automatically assigned an unrelated business type.
-
-### Old filenames remain
-
-Run the analysis again for the same transaction. Exported variants for that
-`transUId` are cleaned when the transaction is regenerated. Targeted runs do
-not remove unrelated transactions.
-
-### Ctrl+C
-
-The calendar periodically returns control to Python so Ctrl+C can be processed.
-SSH/SCP subprocesses are also bounded by configured timeouts.
-
-### No new copy occurs in Log folder mode
-
-The `Log folder` source cache is active. Remove the corresponding file from the
-bank and date-specific `source` directory when a fresh log-folder copy is
-required. Calendar selection in `SSH/SCP (UAT)` always downloads and extracts
-the selected date again.
 
 ## Project files
 
 | File | Purpose |
 | --- | --- |
-| `main.py` | Small CLI/GUI entrypoint |
-| `gui_app.py` | Tkinter window layout, menus, filters, transaction table, and user actions |
-| `gui_services.py` | GUI service helpers for SSH/SCP source download, external tool discovery/focus, and GUI export orchestration |
-| `log_config.py` | Application constants, bank/acquirer mappings, protocol choices, MTI names, and ISO/SPDH response-code descriptions |
-| `log_core.py` | Parsing, transaction correlation, log export, local source handling, and response-code lookup logic |
-| `requirements.txt` | Python dependency pins |
-| `README.md` | Project behavior and operational documentation |
-| `AGENTS.md` | Repository-specific development instructions |
+| `main.py` | Web-server launcher and retained audit-file CLI |
+| `web_app.py` | NiceGUI / Quasar pages, menus, filters, source dialogs and browser actions |
+| `web_services.py` | Parser adapters, bounded cache, worker settings, background jobs and exports |
+| `gui_services.py` | Retained backend SSH/SCP and atomic audit publication helpers; no native UI |
+| `logcomparator_ui/` | Local diff2html Vue component, vendored assets, license and build hook |
+| `log_config.py` | Runtime defaults, bank/protocol mappings and response descriptions |
+| `log_core.py` | Parsing, correlation, source handling and log generation |
+| `pyproject.toml` | Local UI package and PyInstaller-hook registration |
+| `requirements.txt` | Application dependency pins |
+| `start_web.ps1` | Launch the primary web application from source |
+| `test_web_interface.py` | Backend and NiceGUI simulated-user integration tests |
+| `test_diff2html.js` | Vendored diff2html rendering/escaping/scroll test |
+
+## Additional transaction semantics
 
 All transaction labels (including Purchase, Refund, Reversal, LOGON, ECHO
 and DCC Inquiry) include the observed external audit flow phases per protocol:

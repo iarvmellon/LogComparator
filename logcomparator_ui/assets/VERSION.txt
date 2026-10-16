@@ -1,0 +1,3 @@
+diff2html 3.4.56
+Source: https://registry.npmjs.org/diff2html/-/diff2html-3.4.56.tgz
+License: MIT (see diff2html-LICENSE.md)

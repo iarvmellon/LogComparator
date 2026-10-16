@@ -1,5 +1,5 @@
 # Python 3.10 or newer is required.
-# Tkinter must be available (included with the standard Windows Python installer).
-# External prerequisites: Notepad++, WinMerge, and the Notepad++ EnhanceAnyLexer plugin.
-# They are not Python packages and must be installed separately; see README.md.
-tkcalendar==1.6.1
+# The browser UI and all its local assets are included in the executable.
+nicegui==3.18.0
+watchfiles>=1.0,<2
+-e .

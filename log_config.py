@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from contextvars import ContextVar
 import json
 import os
 import subprocess
@@ -51,10 +52,11 @@ __version__ = BUILD_DESCRIBE
 DEFAULT_INPUT = Path(
     r"C:\Users\j.arvanitis\Desktop\Tango\Import\2026-03-06\audit.OPNBISOBKT01.2026-03-06"
 )
-DEFAULT_IMPORT = Path(r"C:\Users\j.arvanitis\Desktop\Tango\Import")
-DEFAULT_OUTPUT = Path(
-    r"C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs"
-)
+DEFAULT_IMPORT = Path(os.environ.get('LOGCOMPARATOR_LOG_DIR', r'C:\Users\j.arvanitis\Desktop\Tango\Import' if os.name == 'nt' else '/opt/tango/MLNPSP01/log'))
+DEFAULT_OUTPUT = Path(os.environ.get('LOGCOMPARATOR_OUTPUT', r'C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs' if os.name == 'nt' else '/data/exports'))
+LOCAL_AUDIT_DIR = Path(os.environ['LOGCOMPARATOR_AUDIT_DIR']) if os.environ.get('LOGCOMPARATOR_AUDIT_DIR') else (None if os.name == 'nt' else Path('/opt/tango/MLNPSP01/audit'))
+DEFAULT_CACHE = Path(os.environ.get('LOGCOMPARATOR_CACHE', str(DEFAULT_OUTPUT.parent / 'source-cache')))
+ENABLE_SSH = os.environ.get('LOGCOMPARATOR_ENABLE_SSH', '1' if os.name == 'nt' else '0').lower() in {'1', 'true', 'yes'}
 APP_VERSION = RELEASE_TAG
 APP_BUILD_DESCRIBE = BUILD_DESCRIBE
 APP_GIT_HASH = GIT_HASH
@@ -79,6 +81,7 @@ class RuntimeSettings:
 
 
 RUNTIME_SETTINGS = RuntimeSettings()
+ACTIVE_RUNTIME_SETTINGS = ContextVar('logcomparator_runtime_settings', default=RUNTIME_SETTINGS)
 
 BANK_AUDIT_CODES = {
     "CASYS/STOPANSKA": "OPNBISOCAS01",

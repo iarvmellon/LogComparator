@@ -12,15 +12,12 @@ import signal
 import subprocess
 import sys
 import threading
-import tkinter as tk
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Iterable, Iterator, TextIO
 
-from tkcalendar import Calendar
 
 from log_config import *
 from iso_checks import IsoMessage, parse_iso_message
@@ -226,13 +223,6 @@ class Transaction:
             self.spdh_response_codes.extend(block.response_codes)
         self.acquirer_ids.update(block.acquirer_ids)
         self.identifiers.update(block.identifiers)
-
-
-@dataclass
-class GuiExportResult:
-    summary: str
-    output_dir: Path
-    selected_trans_uids: list[str]
 
 
 def iter_blocks(handle: TextIO) -> Iterator[str]:
@@ -1904,6 +1894,7 @@ def install_interrupt_handler() -> None:
 
 
 def run_remote_command(command: str, sudo: bool = False) -> str:
+    settings = ACTIVE_RUNTIME_SETTINGS.get()
     if shutil.which("ssh") is None:
         raise RuntimeError("The 'ssh' executable was not found on PATH.")
     remote_command = f"sudo -S -p '' {command}" if sudo else command
@@ -1915,12 +1906,12 @@ def run_remote_command(command: str, sudo: bool = False) -> str:
         "StrictHostKeyChecking=accept-new",
         "-p",
         str(SSH_PORT),
-        f"{RUNTIME_SETTINGS.user}@{DEFAULT_HOST}",
+        f"{settings.user}@{DEFAULT_HOST}",
         remote_command,
     ]
     completed = subprocess.run(
         args,
-        input=RUNTIME_SETTINGS.sudo_password + "\n" if sudo else None,
+        input=settings.sudo_password + "\n" if sudo else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1939,6 +1930,7 @@ def download_remote_file(
     *,
     overwrite: bool = False,
 ) -> Path:
+    settings = ACTIVE_RUNTIME_SETTINGS.get()
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / Path(remote_path).name
     if local_path.is_file() and not overwrite:
@@ -1955,7 +1947,7 @@ def download_remote_file(
         "StrictHostKeyChecking=accept-new",
         "-P",
         str(SSH_PORT),
-        f"{RUNTIME_SETTINGS.user}@{DEFAULT_HOST}:{remote_path}",
+        f"{settings.user}@{DEFAULT_HOST}:{remote_path}",
         str(local_path),
     ]
     completed = subprocess.run(

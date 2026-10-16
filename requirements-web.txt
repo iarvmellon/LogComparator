@@ -1,3 +1,2 @@
-# Optional browser interface; the desktop application does not require this.
+# Compatibility alias: the web interface is now the primary application.
 -r requirements.txt
-nicegui==3.18.0

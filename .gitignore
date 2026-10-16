@@ -5,3 +5,7 @@ dist/
 __pycache__/
 build_info.json
 .venv/
+*.egg-info/
+.pytest_cache/
+.env
+.env.local

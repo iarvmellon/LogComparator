@@ -17,15 +17,15 @@ try {
         } elseif (Get-Command python -ErrorAction SilentlyContinue) {
             $launcher = 'python'
         } else {
-            throw 'Install Python 3.10 or newer with Tkinter, or specify -Python with its executable path.'
+            throw 'Install Python 3.10 or newer, or specify -Python with its executable path.'
         }
-        & $launcher @launcherArgs -c "import sys, tkinter; assert sys.version_info >= (3, 10), 'Python 3.10 or newer is required'"
-        if ($LASTEXITCODE -ne 0) { throw 'Python 3.10+ with Tkinter is required.' }
+        & $launcher @launcherArgs -c "import sys; assert sys.version_info >= (3, 10), 'Python 3.10 or newer is required'"
+        if ($LASTEXITCODE -ne 0) { throw 'Python 3.10+ is required.' }
         & $launcher @launcherArgs -m venv .venv
         if ($LASTEXITCODE -ne 0) { throw 'Could not create the project virtual environment.' }
     }
-    & $projectPython -c "import sys, tkinter; assert sys.version_info >= (3, 10), 'Python 3.10 or newer is required'"
-    if ($LASTEXITCODE -ne 0) { throw 'The project virtual environment requires Python 3.10+ with Tkinter.' }
+    & $projectPython -c "import sys; assert sys.version_info >= (3, 10), 'Python 3.10 or newer is required'"
+    if ($LASTEXITCODE -ne 0) { throw 'The project virtual environment requires Python 3.10+.' }
     & $projectPython -m pip install -r requirements.txt -r requirements-build.txt
     if ($LASTEXITCODE -ne 0) { throw 'Could not install project dependencies.' }
     & $projectPython create_release.py --update-build-info

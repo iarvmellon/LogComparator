@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 from pathlib import Path
 
-from gui_app import run_gui_workflow
 from log_core import DEFAULT_OUTPUT, PROTOCOL_CHOICES, split_audit_files
 
 
@@ -15,9 +15,11 @@ def parse_args() -> argparse.Namespace:
         "input",
         nargs="*",
         type=Path,
-        help="Optional local audit files. Without inputs, the GUI application opens.",
+        help="Optional local audit files. Without inputs, the web interface opens.",
     )
     parser.add_argument("-o", "--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument('--port', type=int, default=8080, help='Web interface port (default: 8080).')
+    parser.add_argument('--no-browser', action='store_true', help='Start the web server without opening a browser.')
     parser.add_argument(
         "--tango-log",
         type=Path,
@@ -70,7 +72,8 @@ def main() -> int:
     args = parse_args()
     output_dir = args.output.expanduser().resolve()
     if not args.input:
-        return run_gui_workflow(output_dir)
+        from web_app import run_web
+        return run_web(port=args.port, show=not args.no_browser, output=output_dir)
 
     input_paths = [path.expanduser().resolve() for path in args.input]
     missing = [path for path in input_paths if not path.is_file()]
@@ -120,4 +123,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     raise SystemExit(main())

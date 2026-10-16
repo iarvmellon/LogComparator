@@ -1,0 +1,42 @@
+services:
+  logcomparator:
+    build:
+      context: .
+      args:
+        BUILD_DESCRIBE: ${LOGCOMPARATOR_VERSION:-container}
+        BUILD_GIT_HASH: ${LOGCOMPARATOR_GIT_HASH:-unknown}
+    image: logcomparator:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${LOGCOMPARATOR_PORT:-8080}:8080"
+    environment:
+      LOGCOMPARATOR_ENABLE_SSH: "0"
+      LOGCOMPARATOR_LOG_DIR: /opt/tango/MLNPSP01/log
+      LOGCOMPARATOR_AUDIT_DIR: /opt/tango/MLNPSP01/audit
+      LOGCOMPARATOR_OUTPUT: /data/exports
+      LOGCOMPARATOR_CACHE: /data/cache
+      NICEGUI_STORAGE_PATH: /data/state
+    volumes:
+      - type: bind
+        source: ${TANGO_LOG_DIR:-/opt/tango/MLNPSP01/log}
+        target: /opt/tango/MLNPSP01/log
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TANGO_AUDIT_DIR:-/opt/tango/MLNPSP01/audit}
+        target: /opt/tango/MLNPSP01/audit
+        read_only: true
+        bind:
+          create_host_path: false
+      - exports:/data/exports
+      - cache:/data/cache
+      - state:/data/state
+    # Optional existing Linux group with read access to the Tango directories.
+    group_add:
+      - "${TANGO_READ_GID:-10001}"
+volumes:
+  exports:
+  cache:
+  state:

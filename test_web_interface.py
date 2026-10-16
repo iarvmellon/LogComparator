@@ -5,7 +5,7 @@ import unittest
 import os
 from pathlib import Path
 
-from web_services import export_logs, filter_rows, load_logs
+from web_services import comparison_diff, export_logs, filter_rows, inspect_local_sources, load_logs, with_settings
 
 
 def source_fixture(folder):
@@ -23,6 +23,65 @@ def source_fixture(folder):
 
 
 class WebServicesTests(unittest.TestCase):
+    def test_filesystem_watcher_detects_writes_and_stops(self):
+        from web_services import SourceWatcher
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            watcher = SourceWatcher(folder)
+            try:
+                watcher.changed.clear()
+                # Repeated writes allow the native watcher to finish starting.
+                for attempt in range(30):
+                    (folder / 'tango.log.2026-10-14').write_text(str(attempt))
+                    if watcher.changed.wait(0.1):
+                        break
+                self.assertTrue(watcher.changed.is_set())
+                self.assertIsNone(watcher.error)
+            finally:
+                watcher.close()
+                watcher.thread.join(timeout=3)
+            self.assertFalse(watcher.thread.is_alive())
+
+    def test_split_folders_gzip_and_multiple_dates_do_not_modify_originals(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logs, audits, cache = root / 'log', root / 'audit', root / 'cache'
+            logs.mkdir()
+            audits.mkdir()
+            source_fixture(root)
+            source_audit = root / 'audit.OPNBISOBKT01.2026-10-14'
+            (audits / (source_audit.name + '.gz')).write_bytes(gzip.compress(source_audit.read_bytes()))
+            (logs / 'tango.log.2026-10-14.gz').write_bytes(gzip.compress(b''))
+            (logs / 'tango.log.2026-10-15').write_text('')
+            before = {path: path.read_bytes() for path in [*logs.iterdir(), *audits.iterdir()]}
+            dates, banks = inspect_local_sources(logs, audits)
+            self.assertEqual(dates, ['2026-10-14', '2026-10-15'])
+            self.assertIn('AKTIF/BKT', banks)
+            with self.assertRaisesRegex(ValueError, 'Choose a date'):
+                load_logs(logs, 'AKTIF/BKT', audit_folder=audits, cache_folder=cache)
+            loaded = load_logs(logs, 'AKTIF/BKT', '2026-10-14', audit_folder=audits, cache_folder=cache)
+            self.assertEqual(len(loaded.rows), 2)
+            self.assertEqual(loaded.audit_folder, audits.resolve())
+            self.assertTrue(loaded.audits[0].resolve().is_relative_to(cache.resolve()))
+            self.assertEqual({path: path.read_bytes() for path in [*logs.iterdir(), *audits.iterdir()]}, before)
+            paths = export_logs(loaded, [loaded.rows[0]['transuid']], root / 'exports')
+            self.assertIn('asc<0810>', paths[0].read_text(encoding='utf-8'))
+
+    def test_diff_has_valid_lines_and_session_settings_are_isolated(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import log_core as core
+        diff = comparison_diff('a\nlast', 'a\nchanged', 'left.log', 'right.log')
+        self.assertIn('-last\n+changed\n', diff)
+        self.assertEqual(comparison_diff('same', 'same', 'a', 'b'), '')
+        with patch('log_core.shutil.which', return_value='ssh'), patch('log_core.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout='ok')) as execute:
+            for user in ('session-a', 'session-b'):
+                with_settings(core.RuntimeSettings(user=user, sudo_password='test-only'), core.run_remote_command, 'echo ok', True)
+                self.assertIn(f'{user}@{core.DEFAULT_HOST}', execute.call_args.args[0])
+                self.assertEqual(execute.call_args.kwargs['input'], 'test-only\n')
+        self.assertIs(core.ACTIVE_RUNTIME_SETTINGS.get(), core.RUNTIME_SETTINGS)
+
     def test_real_load_filter_and_targeted_export(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
@@ -64,6 +123,82 @@ class WebServicesTests(unittest.TestCase):
 
 
 class WebPageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_linux_import_uses_separate_folders_without_ssh(self):
+        if 'PYTEST_CURRENT_TEST' not in os.environ:
+            self.skipTest('Run the NiceGUI simulation with pytest.')
+        from contextlib import ExitStack
+        from unittest.mock import patch
+        from nicegui import ui
+        from nicegui.testing.user_simulation import user_simulation
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            logs, audits = root / 'log', root / 'audit'
+            logs.mkdir()
+            audits.mkdir()
+            source_fixture(root)
+            (root / 'tango.log.2026-10-14').replace(logs / 'tango.log.2026-10-14')
+            (root / 'audit.OPNBISOBKT01.2026-10-14').replace(audits / 'audit.OPNBISOBKT01.2026-10-14')
+            (logs / 'tango.log.2026-10-15').write_text('')
+            for name, value in {'ENABLE_SSH': False, 'DEFAULT_IMPORT': logs,
+                                'LOCAL_AUDIT_DIR': audits, 'DEFAULT_OUTPUT': root / 'exports'}.items():
+                stack.enter_context(patch('log_core.' + name, value))
+            with patch('sys.argv', ['web_app.py', '--no-browser']):
+                simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
+                user = await simulation.__aenter__()
+            try:
+                await user.open('/')
+                await user.should_not_see(marker='ssh-menu')
+                user.find(marker='import-menu').click()
+                await user.should_see('Import local log folder', retries=100)
+                self.assertTrue(max(user.find(ui.dialog).elements, key=lambda e: e.id).value)
+                dates = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Log date (auto for one date)')
+                for _ in range(100):
+                    if len(dates.options) == 2:
+                        break
+                    await asyncio.sleep(0.1)
+                self.assertEqual(dates.options, ['2026-10-14', '2026-10-15'])
+                with user:
+                    dates.set_value('2026-10-14')
+                user.find('Load folder').click()
+                await user.should_see('Loaded transactions: 2', retries=100)
+                table = next(iter(user.find(ui.table).elements))
+                self.assertEqual(len(table.rows), 2)
+                live_timer = next(e for e in user.find(ui.timer).elements if e.interval == 0.25)
+                audit_file = audits / 'audit.OPNBISOBKT01.2026-10-14'
+                addition = audit_file.read_text().replace('ref: 123', 'ref: 789').replace('ref: 456', 'ref: 790')
+                with audit_file.open('a') as stream:
+                    stream.write(addition)
+                with user:
+                    await live_timer.callback()
+                self.assertEqual(len(table.rows), 2)  # disabled by default
+                inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
+                with user:
+                    table.selected = [table.rows[0]]
+                    inputs['From'].set_value('2026-10-14 06:00:00')
+                    inputs['TransactionType'].set_value('LOGON')
+                    next(iter(user.find(marker='live-update').elements)).set_value(True)
+                    from unittest.mock import Mock
+                    with patch.dict(live_timer.callback.__globals__, load_logs=Mock(side_effect=OSError('temporary read failure'))):
+                        await live_timer.callback()
+                self.assertEqual(len(table.rows), 2)
+                await user.should_see('Live update delayed')
+                # A later filesystem event retries the read without clearing rows.
+                with audit_file.open('a') as stream:
+                    stream.write('\n')
+                await asyncio.sleep(0.4)
+                with user:
+                    await live_timer.callback()
+                self.assertEqual(len(table.rows), 4)
+                self.assertEqual(len(table.selected), 1)
+                self.assertEqual(inputs['From'].value, '2026-10-14 06:00:00')
+                self.assertEqual(inputs['TransactionType'].value, 'LOGON')
+                self.assertIs(table.selected[0], table.rows[0])
+                with user:
+                    await live_timer.callback()
+                self.assertEqual(len(table.rows), 4)
+            finally:
+                await simulation.__aexit__(None, None, None)
+
     async def test_page_load_filter_open_compare_and_download(self):
         if 'PYTEST_CURRENT_TEST' not in os.environ:
             self.skipTest('Run the NiceGUI simulation with pytest.')
@@ -78,6 +213,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             remote_download = remote_patch.start()
             background_patch = patch('gui_services.download_remaining_uat_audits')
             background_download = background_patch.start()
+            output_patch = patch('log_core.DEFAULT_OUTPUT', folder / 'exports')
+            output_patch.start()
             listing_patch = patch('gui_services.list_remote_logs', return_value=[
                 '/uat/tango.log.2026-10-14.gz', '/uat/tango.log.2026-10-12',
                 '/uat/tango.log.2026-10-14.part2.gz', '/uat/unrelated'])
@@ -154,9 +291,13 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(table.rows), 1)
                 with user:
                     inputs['TransUID'].set_value('')
-                    table.selected = list(table.rows)
+                    table.selected = []
+                user.find(ui.table).trigger('selection', {'added': True, 'rows': list(table.rows), 'keys': [row['transuid'] for row in table.rows]})
                 user.find(kind=ui.button, content='Compare').click()
                 await user.should_see('Compare transactions', retries=100)
+                await user.should_see(marker='diff2html-comparison')
+                assets = await user.http_client.get('/logcomparator-assets/diff2html-ui-base.min.js')
+                self.assertEqual(assets.status_code, 200)
                 user.find('Close').click()
                 with patch.object(user.navigate, 'to') as navigate:
                     user.find(kind=ui.button, content='Open').click()
@@ -187,11 +328,47 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     selects['Bank/Acquirer'].set_value('AKTIF/BKTKOS')
                 await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
                 self.assertEqual(remote_download.call_count, 1)
+                user.find(marker='settings-menu').click()
+                await user.should_see('SSH user')
+                settings_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
+                self.assertFalse(settings_inputs['Sudo password (leave empty to keep current)'].value)
+                with user:
+                    settings_inputs['Output folder'].set_value(str(folder / 'saved'))
+                    settings_inputs['SSH user'].set_value('web-user')
+                user.find('Save settings').click()
+                await user.should_see('Settings updated.')
+                user.find(marker='export-options-menu').click()
+                await user.should_see('Export options')
+                user.find(kind=ui.button, content='Close').click()
+                user.find(marker='close-workspace').click()
+                self.assertEqual(table.rows, [])
+                user.find(marker='import-menu').click()
+                await user.should_see('Import local log folder')
+                import_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
+                import_selects = {e.props.get('label'): e for e in user.find(ui.select).elements}
+                with user:
+                    import_inputs['Folder path'].set_value(str(folder))
+                    import_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
+                user.find('Load folder').click()
+                await user.should_see('Loaded transactions: 2', retries=100)
+                self.assertEqual(remote_download.call_count, 1)
+                listing.side_effect = None
+                listing.return_value = ['/uat/tango.log.2026-10-14.gz']
+                user.find(marker='ssh-menu').click()
+                await user.should_see('1 available dates', retries=100)
+                ssh_banks = max((e for e in user.find(ui.select).elements if e.props.get('label') == 'SSH Bank/Acquirer'), key=lambda e: e.id)
+                with user:
+                    ssh_banks.set_value('All')
+                user.find('Download and load').click()
+                await user.should_see('All available banks downloaded.', retries=100)
+                self.assertEqual(remote_download.call_args.args[:2], ('2026-10-14', 'All'))
+                self.assertEqual(background_download.call_count, 1)
             finally:
                 await simulation.__aexit__(None, None, None)
                 remote_patch.stop()
                 listing_patch.stop()
                 background_patch.stop()
+                output_patch.stop()
 
 
 if __name__ == '__main__':
