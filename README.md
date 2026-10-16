@@ -49,26 +49,72 @@ Install the optional packages once, then start from the project root:
 # Or: .\.venv\Scripts\python.exe web_app.py
 ```
 
-The browser opens at `http://127.0.0.1:8080`. Keep the launching terminal open;
+Locally, open `http://127.0.0.1:8080`. Other computers on the same reachable
+network can open `http://<server-IP>:8080` (for example, use the server's Wi-Fi
+or Ethernet IPv4 address shown by `ipconfig`). `0.0.0.0` is the listening
+address, not the address to enter in another computer's browser.
+Keep the launching terminal open;
 press Ctrl+C there to stop the server. Use `-Port 8081` / `--port 8081` if
 needed, or `-NoBrowser` / `--no-browser` to suppress opening a tab. The server
-binds only to this computer and does not publish logs to an external service.
+binds to `0.0.0.0` on port 8080 by default. Network access also requires the
+existing Windows Firewall and network routing to allow that connection; this
+change does not modify firewall rules. This interface has no sign-in, so users
+who can reach it can use its log access, downloads and existing UAT functions.
+Use it on a trusted internal network. It does not publish logs to a hosting service.
 Each browser page has its own filters, source selection and export state.
+Source loading actions are under **File**; the Data panel has no Load or SSH/SCP
+buttons.
 
 - **File > Import** accepts a local folder path on the server computer. Select
-  a bank and press **Load**. A folder with one Tango log date is detected
-  automatically; specify **Source date** for multiple dates or audit-only folders.
+  a bank and press **Load folder** in the Import dialog. A folder with one Tango log date is detected
+  automatically. The Data panel has no Source date field; SSH dates are selected
+  in the SSH dialog. Local import expects a folder with a single Tango log date.
   Compressed sources are extracted using the existing desktop helpers.
-- **SSH/SCP (UAT)** uses **Source date** and **Bank/Acquirer**, with the existing
+- **File > SSH/SCP (UAT)** opens a calendar
+  and bank/acquirer dialog. It queries the UAT Tango log listing asynchronously:
+  dates with files have green dots and are selectable; other dates are disabled.
+  An **Available dates** dropdown lists every discovered date, and the filenames
+  for the selected date are shown below the heading. **Refresh dates** reloads
+  the listing. The source date is retained if available; otherwise the latest
+  available date is selected. Download stays disabled if listing fails or no
+  dated logs exist. Availability means a Tango log exists, matching the desktop
+  calendar; bank-specific audit availability is checked when downloading.
+  Choose a date and bank, then press **Download and load**; Cancel does not
+  contact UAT. Empty or invalid dates keep the dialog open with a readable
+  validation message. Downloads use the existing
   SSH configuration and download functions. Downloads appear in the existing
   local UAT directory structure. This operation requires access to UAT.
 - Text filters and the inclusive From/To range update the visible rows.
+  **From** and **To** each contain both date and time in one field:
+  `YYYY-MM-DD HH:MM:SS`, using 24-hour time (00–23), independent of the browser's
+  AM/PM locale settings. There are no separate Time fields. Loading a source
+  initializes the range to the full selected day, 00:00:00–23:59:59.
+  Click either field or its calendar icon to open a graphical calendar and
+  24-hour time picker (including seconds), then press **Apply**. Cancel keeps
+  the previous value.
   Timezone shifts displayed timestamps; filtering uses those displayed times.
-- **Open** previews selected exported logs in browser tabs inside a dialog.
+  The web Timezone selector contains only UTC−3 through UTC+3 (including UTC).
+- **Open** opens the selected exported logs in separate browser tabs. Clicking
+  a TransUID link or double-clicking a transaction row also opens that specific
+  transaction in a new tab, using the current export options. Checkbox selection
+  remains available for exporting or comparing multiple transactions.
   **Compare** shows a unified text diff for exactly two selected transactions.
   **Export** downloads selected rows, or all visible rows if none are selected;
   multiple logs are downloaded as a ZIP. The browser version does not launch
   Notepad++ or WinMerge. Temporary exports are removed when the server exits.
+
+After an SSH download, the requested bank stays selected and its transactions
+appear first. Other available bank audits for the same date download in the
+background, with a separate status line. Complete files are published atomically;
+the foreground bank's ready files are retained. Changing Bank/Acquirer reloads
+that bank from the same local folder without another SSH download. If a bank
+is still downloading, it loads when the background job finishes. Changing source
+cancels the previous background job. Concurrent background jobs for the same
+folder are serialized.
+
+Both desktop and web filter bars include **Possible problem**. It performs a
+case-insensitive substring search on the displayed combined ISO/SPDH diagnostic
+text, together with the other active filters. Clear filters resets it as well.
 
 The existing `main.py`, desktop GUI, parser and diagnostic code are unchanged by
 this addition. `web_services.py` adapts the existing parser/exporter and serializes

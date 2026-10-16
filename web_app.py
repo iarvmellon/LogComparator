@@ -1,4 +1,4 @@
-"""Optional, loopback-only NiceGUI/Quasar interface. Run separately from main.py."""
+"""Optional LAN-accessible NiceGUI/Quasar interface. Run separately from main.py."""
 from __future__ import annotations
 
 import argparse
@@ -8,16 +8,38 @@ import io
 import queue
 import tempfile
 import zipfile
-from datetime import datetime
+import uuid
+from collections import OrderedDict
+from urllib.parse import urlencode
+from datetime import date, datetime
 from pathlib import Path
 
 from nicegui import run, ui
 
 import log_core as core
-from gui_services import download_uat_sources
-from web_services import COLUMNS, CORE_LOCK, export_logs, filter_rows, load_logs
+from gui_services import download_uat_sources, list_remote_logs
+from web_services import BackgroundAudits, COLUMNS, CORE_LOCK, export_logs, filter_rows, load_logs
 
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
+PREVIEW_SOURCES = OrderedDict()
+
+
+@ui.page('/transaction/{source_id}')
+async def transaction_page(source_id: str, uid: str):
+    entry = PREVIEW_SOURCES.get(source_id)
+    if entry is None:
+        ui.label('This transaction link has expired. Reload the source in LogComparator.')
+        return
+    loaded, settings = entry
+    ui.label(f'LogComparator - {uid}').classes('text-lg')
+    try:
+        output = Path(tempfile.mkdtemp(prefix='preview-', dir=WORKSPACE.name))
+        paths = await run.io_bound(export_logs, loaded, [uid], output, **dict(settings))
+        text = await run.io_bound(paths[0].read_text, encoding='utf-8', errors='replace')
+        ui.button('Download log', on_click=lambda: ui.download.file(paths[0]))
+        ui.label(text).style('white-space:pre; font-family:Consolas,monospace; font-size:13px')
+    except Exception as error:
+        ui.label(f'Could not open transaction: {error}')
 
 CSS = '''
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
@@ -56,7 +78,12 @@ def download_uat(selected_date: str, bank: str, progress) -> Path:
 def index():
     ui.add_css(CSS)
     loaded = None
+    source_day = ''
     busy = False
+    ssh_picker = None
+    background_job = None
+    pending_bank = None
+    preview_id = None
     font_size = 13
     events = queue.Queue()
     filters = {}
@@ -72,6 +99,11 @@ def index():
         if latest:
             progress_bar.set_value(latest[0])
             status.set_text(latest[1])
+        if background_job is not None:
+            while not background_job.messages.empty():
+                background_status.set_text(background_job.messages.get_nowait())
+            if pending_bank and background_job.done.is_set() and not busy:
+                asyncio.create_task(change_bank())
 
     def offset():
         return int(timezone.value.replace('UTC', '') or 0)
@@ -80,11 +112,17 @@ def index():
         if loaded is None:
             return
         try:
-            minimum = datetime.fromisoformat(f'{from_date.value}T{from_time.value or "00:00:00"}').isoformat(sep=' ', timespec='seconds') if from_date.value else ''
-            maximum = datetime.fromisoformat(f'{to_date.value}T{to_time.value or "23:59:59"}').isoformat(sep=' ', timespec='seconds') if to_date.value else ''
+            try:
+                minimum = datetime.strptime(from_datetime.value, '%Y-%m-%d %H:%M:%S').isoformat(sep=' ', timespec='seconds') if from_datetime.value else ''
+                maximum = datetime.strptime(to_datetime.value, '%Y-%m-%d %H:%M:%S').isoformat(sep=' ', timespec='seconds') if to_datetime.value else ''
+            except ValueError:
+                raise ValueError('Use YYYY-MM-DD HH:MM:SS in From and To (24-hour time).') from None
             if minimum and maximum and minimum > maximum:
                 raise ValueError('From must be before To.')
             table.rows = filter_rows(loaded.rows, {key: control.value or '' for key, control in filters.items()}, minimum, maximum, offset())
+            if preview_id:
+                for row in table.rows:
+                    row['preview_url'] = f'/transaction/{preview_id}?' + urlencode({'uid': row['transuid']})
             visible_uids = {row['transuid'] for row in table.rows}
             table.selected = [row for row in table.selected if row['transuid'] in visible_uids]
             table.update()
@@ -99,6 +137,7 @@ def index():
             return
         async with operation_lock:
             busy = True
+            bank.disable()
             progress_bar.set_visibility(True)
             try:
                 await callback()
@@ -108,40 +147,82 @@ def index():
             finally:
                 poll_progress()
                 busy = False
+                bank.enable()
                 progress_bar.set_visibility(False)
+
+    async def change_bank():
+        nonlocal pending_bank
+        if loaded is not None and bank.value == loaded.bank:
+            pending_bank = None
+            return
+        if busy or loaded is None:
+            return
+        if bank.value not in core.available_banks_for_folder(loaded.folder):
+            if background_job and not background_job.done.is_set():
+                pending_bank = bank.value
+                background_status.set_text(f'Waiting for {bank.value} audits to finish downloading...')
+                return
+            pending_bank = None
+            status.set_text(f'No audit files available for {bank.value} on {source_day}.')
+            bank.set_value(loaded.bank)
+            return
+        pending_bank = None
+        await load_source()
 
     async def load_source(remote=False):
         async def action():
-            nonlocal loaded
+            nonlocal loaded, source_day, background_job, pending_bank, preview_id
             bank_value = bank.value
-            date_value = source_date.value or ''
+            date_value = source_day
             folder_value = folder.value or ''
             if not bank_value:
                 raise ValueError('Select a bank/acquirer.')
             if remote:
-                datetime.strptime(date_value, '%Y-%m-%d')
+                if background_job:
+                    background_job.cancel_event.set()
+                pending_bank = None
+                try:
+                    datetime.strptime(date_value, '%Y-%m-%d')
+                except ValueError:
+                    raise ValueError('Select a valid SSH date before downloading.') from None
                 source = await run.io_bound(download_uat, date_value, bank_value, progress)
                 folder.set_value(str(source))
             else:
                 if not folder_value.strip():
                     raise ValueError('Enter a log folder or use File > Import.')
                 source = Path(folder_value)
+                if background_job and source.resolve() != background_job.folder:
+                    background_job.cancel_event.set()
+                    background_job = None
+                    pending_bank = None
+                    background_status.set_text('')
             status.set_text('Loading source files…')
             result = await run.io_bound(load_logs, source, bank_value, date_value, progress)
             loaded = result
-            source_date.set_value(result.selected_date)
+            preview_id = uuid.uuid4().hex
+            PREVIEW_SOURCES[preview_id] = (result, options())
+            while len(PREVIEW_SOURCES) > 32:
+                PREVIEW_SOURCES.popitem(last=False)
+            source_day = result.selected_date
             selected_date.set_text(f'Selected date:  {result.selected_date}  |  {result.bank}')
-            from_date.set_value(result.selected_date)
-            to_date.set_value(result.selected_date)
+            from_datetime.set_value(f'{result.selected_date} 00:00:00')
+            to_datetime.set_value(f'{result.selected_date} 23:59:59')
             table.selected = []
             poll_progress()
             refresh()
+            if remote:
+                background_status.set_text('Downloading audits for all banks in background...')
+                background_job = BackgroundAudits(result.selected_date, result.folder)
         await perform(action)
 
     def options():
         return dict(protocol_choice=protocol.value, include_byte_data=byte_data.value,
                     include_internal=internal.value, include_tango_to_network=outbound.value,
                     include_network_to_tango=inbound.value)
+
+    def update_preview_options():
+        if preview_id in PREVIEW_SOURCES:
+            PREVIEW_SOURCES[preview_id] = (loaded, options())
 
     async def export_action(mode='download'):
         async def action():
@@ -153,6 +234,11 @@ def index():
             if mode == 'open' and not selection:
                 raise ValueError('Select one or more transactions to open.')
             rows = selection or list(table.rows)
+            if mode == 'open':
+                update_preview_options()
+                for row in rows:
+                    ui.navigate.to(row['preview_url'], new_tab=True)
+                return
             output = Path(tempfile.mkdtemp(prefix='export-', dir=WORKSPACE.name))
             status.set_text(f'Exporting {len(rows)} transaction(s)…')
             paths = await run.io_bound(export_logs, loaded, [row['transuid'] for row in rows], output, **options())
@@ -221,8 +307,9 @@ def index():
             ui.label('Choose a folder on the computer running LogComparator.').classes('text-sm')
             path_input = ui.input('Folder path', value=folder.value).props('outlined dense').classes('w-full')
             async def choose_path():
+                nonlocal source_day
                 folder.set_value(path_input.value)
-                source_date.set_value('')
+                source_day = ''
                 dialog.close()
                 await load_source()
             ui.button('Load folder', on_click=choose_path)
@@ -231,13 +318,111 @@ def index():
     def about():
         ui.notify(f'LogComparator {core.APP_BUILD_DESCRIBE} · NiceGUI / Quasar UI · Local web interface', timeout=6000)
 
+    async def ssh_dialog():
+        nonlocal ssh_picker
+        if busy:
+            ui.notify('Wait for the current operation to finish.', type='info')
+            return
+        if ssh_picker is not None:
+            ssh_picker.delete()
+        available = {}
+        ready = False
+        with ui.dialog() as dialog, ui.card():
+            ui.label('SSH/SCP (UAT) — Select date and bank').classes('text-lg')
+            availability = ui.label('Loading available dates from UAT…').classes('text-sm')
+            files = ui.label().classes('text-sm whitespace-pre-wrap max-w-[600px]')
+
+            def show_files():
+                paths = available.get(remote_date.value, [])
+                files.set_text('Files on UAT:\n' + '\n'.join(core.any_path_name(path) for path in paths) if paths else '')
+
+            remote_date = ui.input('SSH date', value=source_day or date.today().isoformat(), on_change=show_files).props('outlined dense type=date readonly')
+            calendar = ui.date(value=remote_date.value).bind_value(remote_date)
+            calendar.props['options'] = []
+            calendar.disable()
+            date_list = ui.select([], label='Available dates').props('outlined dense').classes('w-full').bind_value(remote_date)
+            date_list.disable()
+            remote_bank = ui.select(list(core.BANK_AUDIT_CODES), label='SSH Bank/Acquirer', value=bank.value).props('outlined dense').classes('w-full')
+
+            async def confirm():
+                nonlocal source_day
+                try:
+                    datetime.strptime(remote_date.value or '', '%Y-%m-%d')
+                except ValueError:
+                    ui.notify('Select a valid SSH date before downloading.', type='warning')
+                    return
+                if not ready or remote_date.value not in available:
+                    ui.notify('No Tango log files are available for this date.', type='warning')
+                    return
+                if remote_bank.value not in core.BANK_AUDIT_CODES:
+                    ui.notify('Select a bank/acquirer.', type='warning')
+                    return
+                source_day = remote_date.value
+                bank.set_value(remote_bank.value)
+                dialog.close()
+                await load_source(remote=True)
+
+            with ui.row():
+                download_button = ui.button('Download and load', on_click=confirm)
+                download_button.disable()
+                retry_button = ui.button('Refresh dates', on_click=lambda: refresh_dates()).props('flat')
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+
+            async def refresh_dates():
+                nonlocal ready
+                ready = False
+                download_button.disable()
+                calendar.disable()
+                date_list.disable()
+                retry_button.disable()
+                availability.set_text('Loading available dates from UAT…')
+                files.set_text('')
+                try:
+                    paths = await run.io_bound(list_remote_logs)
+                    if dialog.is_deleted or ssh_picker is not dialog:
+                        return
+                    available.clear()
+                    for path in paths:
+                        day = core.parse_log_date(core.any_path_name(path))
+                        if day:
+                            available.setdefault(day, []).append(path)
+                    days = sorted(available)
+                    marked_days = [day.replace('-', '/') for day in days]
+                    calendar.props['options'] = marked_days
+                    calendar.props['events'] = marked_days
+                    calendar.props['event-color'] = 'green'
+                    date_list.set_options(days)
+                    if not days:
+                        availability.set_text('No dated Tango log files found on UAT. Use Refresh dates to check again.')
+                        remote_date.set_value('')
+                    else:
+                        selected = remote_date.value if remote_date.value in available else days[-1]
+                        remote_date.set_value(selected)
+                        calendar.props['default-year-month'] = selected[:7].replace('-', '/')
+                        calendar.enable()
+                        date_list.enable()
+                        ready = True
+                        download_button.enable()
+                        availability.set_text(f'{len(days)} available dates. Green dots mark existing logs; other dates are disabled.')
+                    calendar.update()
+                    show_files()
+                except Exception as error:
+                    if not dialog.is_deleted:
+                        availability.set_text(f'Could not list UAT logs: {error}. Use Refresh dates to retry.')
+                finally:
+                    if not dialog.is_deleted:
+                        retry_button.enable()
+        ssh_picker = dialog
+        dialog.open()
+        await refresh_dates()
+
     with ui.row().classes('menubar'):
         for label in ('File', 'Edit', 'View', 'Tools', 'Help'):
             with ui.button(label).props('flat dense'):
                 with ui.menu():
                     if label == 'File':
                         ui.menu_item('Import…', on_click=import_dialog)
-                        ui.menu_item('SSH/SCP (UAT)', on_click=lambda: load_source(remote=True))
+                        ui.menu_item('SSH/SCP (UAT)', on_click=ssh_dialog).mark('ssh-menu')
                         ui.menu_item('Export', on_click=export_action)
                     elif label == 'Edit':
                         ui.menu_item('Clear filters', on_click=clear_filters)
@@ -274,23 +459,48 @@ def index():
         ui.button('Export', on_click=export_action).props('outline dense').classes('w-24')
         ui.button('Compare', on_click=lambda: export_action('compare')).props('outline dense').classes('w-24')
 
+    def datetime_picker(label, default_time):
+        async def open_picker():
+            current = control.value or f'{source_day or date.today().isoformat()} {default_time}'
+            with ui.dialog() as picker, ui.card():
+                ui.label(f'{label} - Date and time').classes('text-lg')
+                with ui.row().classes('items-start gap-4'):
+                    day = ui.date(value=current[:10]).mark(f'{label}-date')
+                    clock = ui.time(value=current[11:], mask='HH:mm:ss').props('format24h with-seconds').mark(f'{label}-time')
+
+                def apply():
+                    value = f'{day.value} {clock.value}'
+                    try:
+                        parsed = datetime.fromisoformat(value)
+                    except (ValueError, TypeError):
+                        ui.notify('Select a date and a valid 24-hour time.', type='warning')
+                        return
+                    control.set_value(parsed.strftime('%Y-%m-%d %H:%M:%S'))
+                    picker.close()
+
+                with ui.row():
+                    ui.button('Apply', on_click=apply).mark(f'{label}-apply')
+                    ui.button('Cancel', on_click=picker.close)
+            picker.open()
+
+        control = ui.input(label, on_change=refresh).props('outlined dense readonly placeholder="YYYY-MM-DD HH:MM:SS"').classes('w-64')
+        control.on('click', open_picker)
+        with control.add_slot('append'):
+            ui.button(icon='event').props('flat dense round').on('click.stop', open_picker).mark(f'{label}-picker')
+        return control
+
     with ui.row().classes('toolbar items-start'):
         with panel('Data').classes('grow'), ui.row().classes('items-center gap-3'):
             folder = ui.input('Log folder', placeholder=r'C:\…\YYYY-MM-DD').props('outlined dense').classes('w-80 grow')
-            bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES))).props('outlined dense').classes('w-48')
-            source_date = ui.input('Source date (auto if empty)').props('outlined dense type=date').classes('w-48')
-            ui.button('Load', on_click=lambda: load_source()).props('outline dense')
-            ui.button('SSH/SCP (UAT)', on_click=lambda: load_source(remote=True)).props('outline dense')
+            bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-48')
         with panel('Time range'), ui.row().classes('items-center gap-2'):
-            from_date = ui.input('From', on_change=refresh).props('outlined dense type=date').classes('w-36')
-            from_time = ui.input('Time', value='00:00:00', on_change=refresh).props('outlined dense type=time step=1').classes('w-32')
-            to_date = ui.input('To', on_change=refresh).props('outlined dense type=date').classes('w-36')
-            to_time = ui.input('Time', value='23:59:59', on_change=refresh).props('outlined dense type=time step=1').classes('w-32')
-            timezone = ui.select(['UTC'] + [f'UTC{i:+d}' for i in range(-12, 15) if i], value='UTC', label='Timezone', on_change=refresh).props('outlined dense').classes('w-28')
+            from_datetime = datetime_picker('From', '00:00:00')
+            to_datetime = datetime_picker('To', '23:59:59')
+            timezone = ui.select([f'UTC{i:+d}' if i else 'UTC' for i in range(-3, 4)], value='UTC', label='Timezone', on_change=refresh).props('outlined dense').classes('w-28')
 
     with panel('Filters').classes('w-full'), ui.row().classes('w-full gap-3'):
         for key, label in COLUMNS:
-            if key in ('datetime', 'possibleproblem'):
+            if key == 'datetime':
                 continue
             filters[key] = ui.input(label, on_change=refresh).props('outlined dense debounce=350').classes('filter-input')
 
@@ -300,25 +510,28 @@ def index():
     table.classes('log-table').props('dense flat bordered separator=cell virtual-scroll')
     table.props['visible-columns'] = [key for key, _ in COLUMNS]
     table.add_slot('body', '''
-        <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]">
+        <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
           <q-td auto-width><q-checkbox dense v-model="props.selected" /></q-td>
-          <q-td v-for="col in props.cols" :key="col.name" :props="props">{{ col.value }}</q-td>
+          <q-td v-for="col in props.cols" :key="col.name" :props="props"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else>{{ col.value }}</span></q-td>
         </q-tr>''')
     with ui.row().classes('w-full items-center justify-between'):
-        status = ui.label('Select a log folder and bank/acquirer, then press Load.').classes('status')
+        status = ui.label('Use File > Import or File > SSH/SCP (UAT) to load logs.').classes('status')
         ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} · Web').classes('status text-gray-600')
     progress_bar = ui.linear_progress(value=0).classes('w-full')
+    background_status = ui.label().classes('status')
+    for control in (protocol, byte_data, internal, outbound, inbound):
+        control.on_value_change(update_preview_options)
     progress_bar.set_visibility(False)
     ui.timer(0.2, poll_progress)
     # Browser Ctrl +/- zooms the entire interface using the browser's native control.
 
 
 def main():
-    parser = argparse.ArgumentParser(description='LogComparator local web interface (NiceGUI / Quasar)')
+    parser = argparse.ArgumentParser(description='LogComparator network web interface (NiceGUI / Quasar)')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args()
-    ui.run(host='127.0.0.1', port=args.port, title=f'LogComparator {core.APP_BUILD_DESCRIBE}',
+    ui.run(host='0.0.0.0', port=args.port, title=f'LogComparator {core.APP_BUILD_DESCRIBE}',
            reload=False, show=not args.no_browser, favicon='🔎')
 
 

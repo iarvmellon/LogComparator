@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
+import queue
+import threading
 
 import log_core as core
 from diagnostic_common import problem_display_text, problem_row_tag
@@ -13,6 +15,45 @@ from transaction_checks import build_problem_columns, is_successful_protocol_onl
 
 # The original parser has process-wide caches. Serialize access across browser tabs.
 CORE_LOCK = RLock()
+BACKGROUND_LOCKS = {}
+
+
+class BackgroundAudits:
+    """Download other banks with atomic publication, without holding parser locks."""
+    def __init__(self, selected_date: str, folder: Path):
+        self.cancel_event = threading.Event()
+        self.done = threading.Event()
+        self.messages = queue.Queue()
+        self.error = None
+        self.folder = folder.resolve()
+        self.selected_date = selected_date
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        from gui_services import download_remaining_uat_audits
+        lock = BACKGROUND_LOCKS.setdefault(self.folder, threading.Lock())
+        acquired = False
+        try:
+            while not self.cancel_event.is_set():
+                acquired = lock.acquire(timeout=0.2)
+                if acquired:
+                    break
+            if not acquired or self.cancel_event.is_set():
+                return
+            ready = {path.name for path in self.folder.iterdir() if path.is_file()}
+            download_remaining_uat_audits(self.selected_date, self.folder, ready,
+                                        progress_callback=self.messages.put, cancel_event=self.cancel_event)
+            if not self.cancel_event.is_set():
+                self.messages.put('Background audits ready for all banks')
+        except Exception as error:
+            self.error = str(error)
+            self.messages.put(f'Background download failed: {error}')
+        finally:
+            if acquired:
+                lock.release()
+            self.done.set()
+
 COLUMNS = [
     ('datetime', 'Date/Time'), ('transuid', 'TransUID'), ('stan', 'STAN'),
     ('rrn', 'RRN'), ('authcode', 'AuthCode'), ('sequencenumber', 'Sequence_Number'),

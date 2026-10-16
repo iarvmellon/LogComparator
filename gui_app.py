@@ -95,6 +95,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
     amount_var = tk.StringVar(root)
     response_code_spdh_var = tk.StringVar(root)
     response_code_iso_var = tk.StringVar(root)
+    possible_problem_var = tk.StringVar(root)
     include_internal_var = tk.BooleanVar(root, value=False)
     include_tango_to_network_var = tk.BooleanVar(root, value=True)
     include_network_to_tango_var = tk.BooleanVar(root, value=True)
@@ -184,6 +185,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         amount_entry.configure(state=entry_state)
         response_code_spdh_entry.configure(state=entry_state)
         response_code_iso_entry.configure(state=entry_state)
+        possible_problem_entry.configure(state=entry_state)
 
     def update_source_state() -> None:
         is_log_folder = environment_var.get() == SOURCE_LOG_FOLDER
@@ -341,6 +343,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         amount_var.set("")
         response_code_spdh_var.set("")
         response_code_iso_var.set("")
+        possible_problem_var.set("")
 
     def clear_bank_and_transactions() -> None:
         bank_var.set("")
@@ -954,6 +957,9 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         validatecommand=(response_code_validate, "%P"),
     )
     response_code_iso_entry.pack(fill=tk.X)
+    possible_problem_group = filter_group("Possible problem")
+    possible_problem_entry = tk.Entry(possible_problem_group, textvariable=possible_problem_var, width=30, state="disabled")
+    possible_problem_entry.pack(fill=tk.X)
 
     configurable_columns = (
         "transuid",
@@ -1108,6 +1114,8 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             if column_visible_vars[column].get():
                 filter_groups[column].pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
         transaction_tree.configure(displaycolumns=visible_transaction_columns())
+        possible_problem_group.pack_forget()
+        possible_problem_group.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
         autosize_transaction_columns()
         schedule_transaction_filters()
 
@@ -1243,8 +1251,10 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
             "amt": amount_var.get().strip(),
             "responsecodespdh": response_code_spdh_var.get().strip(),
             "responsecodeiso": response_code_iso_var.get().strip(),
+            "possibleproblem": possible_problem_var.get().strip(),
         }
         value_by_column = dict(zip(transaction_columns, values))
+        value_by_column["possibleproblem"] = problem_display_text(value_by_column["possibleproblem"])
         for column, filter_value in filters.items():
             if filter_value and filter_value.casefold() not in value_by_column[column].casefold():
                 return False
@@ -1575,6 +1585,7 @@ def choose_run_options(base_output: Path = DEFAULT_OUTPUT) -> tuple[
         amount_var,
         response_code_spdh_var,
         response_code_iso_var,
+        possible_problem_var,
     ):
         filter_var.trace_add("write", schedule_transaction_filters)
 

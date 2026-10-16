@@ -1,5 +1,6 @@
 """Optional web tests: install requirements-web.txt before running this module."""
 import tempfile
+import asyncio
 import unittest
 import os
 from pathlib import Path
@@ -73,21 +74,81 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             source_fixture(folder)
+            remote_patch = patch('gui_services.download_uat_sources', return_value=folder)
+            remote_download = remote_patch.start()
+            background_patch = patch('gui_services.download_remaining_uat_audits')
+            background_download = background_patch.start()
+            listing_patch = patch('gui_services.list_remote_logs', return_value=[
+                '/uat/tango.log.2026-10-14.gz', '/uat/tango.log.2026-10-12',
+                '/uat/tango.log.2026-10-14.part2.gz', '/uat/unrelated'])
+            listing = listing_patch.start()
             with patch('sys.argv', ['web_app.py', '--no-browser']):
                 simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
                 user = await simulation.__aenter__()
             try:
                 await user.open('/')
                 inputs = {element.props.get('label'): element for element in user.find(ui.input).elements}
+                self.assertFalse(any('Source date' in (label or '') for label in inputs))
                 selects = {element.props.get('label'): element for element in user.find(ui.select).elements}
+                self.assertEqual(selects['Timezone'].options, ['UTC-3', 'UTC-2', 'UTC-1', 'UTC', 'UTC+1', 'UTC+2', 'UTC+3'])
                 with user:
                     inputs['Log folder'].set_value(str(folder))
                     selects['Bank/Acquirer'].set_value('AKTIF/BKT')
-                user.find('Load').click()
+                self.assertFalse(any(e.props.get('label') in ('Load', 'SSH/SCP (UAT)') for e in user.find(ui.button).elements))
+                # File > SSH lists available dates before contacting UAT for a download.
+                user.find(marker='ssh-menu').click()
+                await user.should_see('2 available dates', retries=100)
+                calendar = next(iter(user.find(ui.date).elements))
+                self.assertEqual(calendar.props['options'], ['2026/10/12', '2026/10/14'])
+                self.assertEqual(calendar.props['events'], calendar.props['options'])
+                await user.should_see('tango.log.2026-10-14.gz')
+                remote_download.assert_not_called()
+                user.find('Cancel').click()
+                remote_download.assert_not_called()
+                user.find(marker='ssh-menu').click()
+                await user.should_see('2 available dates', retries=100)
+                ssh_date = max((e for e in user.find(ui.input).elements if e.props.get('label') == 'SSH date'), key=lambda e: e.id)
+                self.assertTrue(ssh_date.props['readonly'])
+                with user:
+                    ssh_date.set_value('2026-10-14')
+                user.find('Download and load').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
+                remote_download.assert_called_once()
+                self.assertEqual(remote_download.call_args.args[:2], ('2026-10-14', 'AKTIF/BKT'))
+                await user.should_see('Background audits ready for all banks', retries=100)
+                background_download.assert_called_once()
+                self.assertEqual(background_download.call_args.args[:2], ('2026-10-14', folder.resolve()))
+                self.assertEqual(selects['Bank/Acquirer'].value, 'AKTIF/BKT')
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
+                with user:
+                    inputs['Possible problem'].set_value('nonexistent-problem')
+                self.assertEqual(len(table.rows), 0)
+                with user:
+                    inputs['Possible problem'].set_value('')
+                self.assertEqual(len(table.rows), 2)
                 self.assertEqual(table.columns[-1]['label'], 'Possible problem')
+                self.assertFalse(any(e.props.get('label', '').startswith('Time') for e in user.find(ui.input).elements))
+                self.assertEqual(inputs['From'].value, '2026-10-14 00:00:00')
+                self.assertEqual(inputs['To'].value, '2026-10-14 23:59:59')
+                user.find(marker='From-picker').trigger('click.stop')
+                await user.should_see('From - Date and time')
+                day = next(iter(user.find(marker='From-date').elements))
+                clock = next(iter(user.find(marker='From-time').elements))
+                self.assertTrue(clock.props['format24h'])
+                with user:
+                    day.set_value('2026-10-14')
+                    clock.set_value('06:47:59')
+                user.find(marker='From-apply').click()
+                self.assertEqual(inputs['From'].value, '2026-10-14 06:47:59')
+                self.assertEqual(len(table.rows), 0)
+                with user:
+                    inputs['From'].set_value('2026-10-14 06:47:59')
+                self.assertEqual(len(table.rows), 0)
+                with user:
+                    inputs['From'].set_value('2026-10-14 06:47:58')
+                    inputs['To'].set_value('2026-10-14 06:47:58')
+                self.assertEqual(len(table.rows), 2)
                 with user:
                     inputs['TransUID'].set_value(table.rows[0]['transuid'])
                 self.assertEqual(len(table.rows), 1)
@@ -97,15 +158,40 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 user.find(kind=ui.button, content='Compare').click()
                 await user.should_see('Compare transactions', retries=100)
                 user.find('Close').click()
-                user.find(kind=ui.button, content='Open').click()
-                await user.should_see('Transaction logs', retries=100)
-                user.find('Close').click()
+                with patch.object(user.navigate, 'to') as navigate:
+                    user.find(kind=ui.button, content='Open').click()
+                    await asyncio.sleep(0.1)
+                    self.assertEqual(navigate.call_count, 2)
+                    self.assertTrue(all(call.kwargs.get('new_tab') for call in navigate.call_args_list))
+                preview = await user.http_client.get(table.rows[0]['preview_url'])
+                self.assertEqual(preview.status_code, 200)
+                self.assertIn('Download log', preview.text)
+                self.assertIn(table.rows[0]['transuid'], preview.text)
+                self.assertNotIn(table.rows[1]['transuid'], preview.text)
                 user.find(kind=ui.button, content='Export').click()
                 response = await user.download.next(timeout=10)
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.content.startswith(b'PK'))
+                user.find(marker='ssh-menu').click()
+                await user.should_see('2 available dates', retries=100)
+                listing.return_value = []
+                user.find(kind=ui.button, content='Refresh dates').click()
+                await user.should_see('No dated Tango log files found on UAT.', retries=100)
+                download_button = max((e for e in user.find(ui.button).elements if e.props.get('label') == 'Download and load'), key=lambda e: e.id)
+                self.assertFalse(download_button.enabled)
+                listing.side_effect = OSError('test SSH connection failure')
+                user.find(kind=ui.button, content='Refresh dates').click()
+                await user.should_see('Could not list UAT logs:', retries=100)
+                self.assertFalse(download_button.enabled)
+                with user:
+                    selects['Bank/Acquirer'].set_value('AKTIF/BKTKOS')
+                await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
+                self.assertEqual(remote_download.call_count, 1)
             finally:
                 await simulation.__aexit__(None, None, None)
+                remote_patch.stop()
+                listing_patch.stop()
+                background_patch.stop()
 
 
 if __name__ == '__main__':
