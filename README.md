@@ -489,10 +489,11 @@ next annotated release tag and builds it after source changes have been committe
 ## Validation
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-web-test.txt
-.\.venv\Scripts\python.exe -m pytest test_web_interface.py test_remote_logs.py test_background_audits.py -q
-.\.venv\Scripts\python.exe -m unittest discover -q
-node test_diff2html.js
+.\.venv\Scripts\python.exe -m pip install -r testing/requirements-web-test.txt
+.\.venv\Scripts\python.exe -m pytest testing -q
+.\.venv\Scripts\python.exe -m unittest discover -s testing -t . -q
+node testing/test_diff2html.js
+node testing/test_table_sizing.js
 ```
 
 Python tests use synthetic source files and mocked SSH calls. They cover loading,
@@ -1077,8 +1078,8 @@ Without positional audit files, `main.py` starts the web interface.
 | `pyproject.toml` | Local UI package and PyInstaller-hook registration |
 | `requirements.txt` | Application dependency pins |
 | `start_web.ps1` | Launch the primary web application from source |
-| `test_web_interface.py` | Backend and NiceGUI simulated-user integration tests |
-| `test_diff2html.js` | Vendored diff2html rendering/escaping/scroll test |
+| `testing/test_web_interface.py` | Backend and NiceGUI simulated-user integration tests |
+| `testing/test_diff2html.js` | Vendored diff2html rendering/escaping/scroll test |
 
 ## Additional transaction semantics
 
@@ -1134,3 +1135,7 @@ The Selection viewer to the right of Time range independently shows or hides War
 The transaction list starts with compact 10px text and bold 12px headers so all columns fit more comfortably on screen. View font-size controls remain available; column widths are recalculated for the chosen font.
 
 The sequence-number column and its filter are labeled **SeqNo**.
+
+Table widths are also enforced through physical column tracks and border-box cells, including custom cell templates, to keep the final Possible problem column inside the viewport.
+
+All Python and JavaScript tests, plus their dependency list, are located in `testing/`. Run the commands above from the project root.

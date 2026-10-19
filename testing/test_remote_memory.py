@@ -11,7 +11,7 @@ from unittest.mock import patch
 import source_memory
 from remote_logs import _mirror_file, RemoteConnection, RemoteSourceWatcher
 from web_services import load_logs, export_logs
-from test_web_interface import source_fixture
+from testing.test_web_interface import source_fixture
 
 class RemoteMemoryTests(unittest.TestCase):
     @patch("remote_logs.core.current_log_date", return_value="2026-10-14")

@@ -160,7 +160,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 stack.enter_context(patch('log_core.' + name, value))
             current_day = stack.enter_context(patch('log_core.current_log_date', return_value='2026-10-14'))
             with patch('sys.argv', ['web_app.py', '--no-browser']):
-                simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
+                simulation = user_simulation(main_file=Path(__file__).resolve().parents[1] / 'web_app.py')
                 user = await simulation.__aenter__()
             try:
                 await user.open('/')
@@ -395,7 +395,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             output_patch = patch('log_core.DEFAULT_OUTPUT', folder / 'exports')
             output_patch.start()
             with patch('sys.argv', ['web_app.py', '--no-browser']):
-                simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
+                simulation = user_simulation(main_file=Path(__file__).resolve().parents[1] / 'web_app.py')
                 user = await simulation.__aenter__()
             try:
                 await user.open('/')

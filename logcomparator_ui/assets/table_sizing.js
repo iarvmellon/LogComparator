@@ -88,6 +88,16 @@ export function installColumnSizing(component) {
       column.headerStyle = column.style;
       total += width;
     }
+    // A colgroup fixes the physical tracks too: custom QTd slots and cell
+    // padding must not let the browser expand the last column off screen.
+    let colgroup = htmlTable.querySelector('colgroup');
+    if (!colgroup) {
+      colgroup = document.createElement('colgroup');
+      htmlTable.prepend(colgroup);
+    }
+    const tracks = [...(selectionWidth ? [selectionWidth] : []), ...columns.map(column => fitted[column.name])];
+    colgroup.innerHTML = tracks.map(width => `<col style="width:${width}px">`).join('');
+    htmlTable.style.maxWidth = '100%';
     htmlTable.style.tableLayout = 'fixed';
     htmlTable.style.width = `${total}px`;
     htmlTable.style.minWidth = `${total}px`;

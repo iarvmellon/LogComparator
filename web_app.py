@@ -167,7 +167,7 @@ html, body { height:100%; overflow:hidden; }
 .q-table th { font-weight:bold; background:white; }
 .q-table th, .q-table td { font-size:var(--log-font,10px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
 .log-table thead th { font-size:calc(var(--log-font,10px) + 2px); font-weight:800; }
-.log-table th, .log-table td { overflow:hidden; text-overflow:ellipsis; }
+.log-table th, .log-table td { box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; }
 .log-table th:first-child, .log-table td:first-child { width:44px!important; min-width:44px!important; max-width:44px!important; padding:0 6px!important; text-align:center; }
 .log-table th:first-child .q-checkbox, .log-table td:first-child .q-checkbox { vertical-align:middle; }
 .log-table th:first-child .q-checkbox__inner, .log-table td:first-child .q-checkbox__inner { font-size:32px!important; }
@@ -999,7 +999,7 @@ def index():
     table.add_slot('body', '''
         <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @click="props.selected = !props.selected" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
           <q-td auto-width @click.stop><q-checkbox dense size="sm" v-model="props.selected" aria-label="Select transaction" /></q-td>
-          <q-td v-for="col in props.cols" :key="col.name" :props="props" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else>{{ col.value }}</span></q-td>
+          <q-td v-for="col in props.cols" :key="col.name" :props="props" :style="col.style" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else>{{ col.value }}</span></q-td>
           <q-menu context-menu touch-position><q-list style="min-width:140px">
             <q-item v-for="action in ['Open', 'Export', 'Compare']" :key="action" clickable v-close-popup @click="$parent.$emit('context-action', {uid:props.row.transuid, action:action})"><q-item-section>{{ action }}</q-item-section></q-item>
           </q-list></q-menu>

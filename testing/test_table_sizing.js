@@ -1,7 +1,7 @@
 const fs = require('fs');
 const assert = require('assert');
 (async () => {
-  const source = fs.readFileSync('logcomparator_ui/assets/table_sizing.js', 'utf8');
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../logcomparator_ui/assets/table_sizing.js'), 'utf8');
   const {measureColumnWidths, fitColumnWidths, installColumnSizing} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   const context = {font:'', measureText(text) {
     const scale = this.font.startsWith('800') ? 1.5 : 1;
@@ -25,7 +25,8 @@ const assert = require('assert');
   assert.equal(narrow.uid+narrow.problem+44,200);
   const frames = [];
   let revision = '1', mutation;
-  const htmlTable = {style:{}};
+  let colgroup;
+  const htmlTable = {style:{},querySelector:()=>colgroup,prepend:element=>{colgroup=element;}};
   const middle = {clientWidth:1000,scrollLeft:0};
   const root = {clientWidth:1000,isConnected:true, querySelector:selector=>selector==='table'?htmlTable:middle,getAttribute:()=>revision};
   global.document = {createElement:()=>({getContext:()=>context})};
@@ -41,6 +42,13 @@ const assert = require('assert');
   await frames.shift()();
   assert.equal(component.columns[0].style,'width:164px;min-width:164px;max-width:164px');
   assert.equal(htmlTable.style.width,'208px');
+  assert.equal(colgroup.innerHTML, '<col style="width:44px"><col style="width:164px">');
+  middle.clientWidth = 150;
+  changed();
+  await frames.shift()();
+  assert.equal(htmlTable.style.width,'148px');
+  assert(colgroup.innerHTML.includes('width:104px'));
+  middle.clientWidth = 1000;
   revision = '2';
   qTable.rows = [];
   mutation();

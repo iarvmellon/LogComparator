@@ -1,6 +1,6 @@
 // Tests the actual vendored renderer and synchronized scrolling without a browser.
 const assert = require('node:assert/strict');
-const {Diff2HtmlUI} = require('./logcomparator_ui/assets/diff2html-ui-base.min.js');
+const {Diff2HtmlUI} = require('../logcomparator_ui/assets/diff2html-ui-base.min.js');
 const left = {scrollTop: 0, scrollLeft: 0, addEventListener(type, fn) { this[type] = fn; }};
 const right = {scrollTop: 0, scrollLeft: 0, addEventListener(type, fn) { this[type] = fn; }};
 const wrapper = {querySelectorAll() { return [left, right]; }};
