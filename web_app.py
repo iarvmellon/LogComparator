@@ -52,6 +52,24 @@ def health():
     return {'app': 'LogComparator', 'ui': 'web', 'version': core.APP_BUILD_DESCRIBE}
 
 
+@app.get('/readme', response_class=HTMLResponse)
+def readme_page():
+    """Display the same README distributed with the application."""
+    import markdown2
+    source = Path(__file__).with_name('README.md').read_text(encoding='utf-8')
+    content = markdown2.markdown(source, extras=['fenced-code-blocks', 'tables'])
+    document = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<title>LogComparator - README</title><style>'
+                'body{max-width:1050px;margin:32px auto;padding:0 20px;font:16px/1.6 Arial,sans-serif;color:#202124;background:#fff}'
+                'h1,h2,h3{line-height:1.3}h2{margin-top:36px;border-bottom:1px solid #ddd;padding-bottom:8px}'
+                'a{color:#1976d2}pre{padding:16px;background:#f4f5f6;overflow:auto}'
+                'code{font-family:Consolas,monospace}table{display:block;overflow:auto;border-collapse:collapse;max-width:100%}'
+                'th,td{border:1px solid #ddd;padding:8px 12px;text-align:left}th{background:#f4f5f6}'
+                '</style></head><body>' + content + '</body></html>')
+    return HTMLResponse(document, headers={'Cache-Control': 'no-store'})
+
+
 @app.get('/transaction/{source_id}', response_class=HTMLResponse)
 def transaction_page(source_id: str, uid: str):
     """A standalone snapshot viewer, independent of NiceGUI's reconnect lifecycle."""
@@ -652,30 +670,13 @@ def index():
         await show()
 
     async def import_dialog():
-        fixed_sources = core.LOCAL_AUDIT_DIR is not None
-        path_input = audit_input = None
         local_files = []
-        listing_revision = 0
-
-        def import_paths():
-            if fixed_sources:
-                return core.DEFAULT_IMPORT, core.LOCAL_AUDIT_DIR
-            return Path(path_input.value), Path(audit_input.value) if audit_input.value else None
-
-        with ui.dialog() as dialog, ui.card().classes('w-[700px] max-w-[95vw]'):
+        log_source = core.DEFAULT_IMPORT
+        audit_source = core.LOCAL_AUDIT_DIR or log_source
+        with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
             ui.label('Import local log folder').classes('text-lg')
-            if fixed_sources:
-                ui.label('Select a log date and bank/acquirer.').classes('text-sm')
-            else:
-                ui.label('Choose a folder on the computer running LogComparator.').classes('text-sm')
-                path_input = ui.input('Folder path', value=folder.value or str(core.DEFAULT_IMPORT)).props('outlined dense').classes('w-full')
-                ui.button('Browse folders', on_click=lambda: browse_folder(path_input.value or core.DEFAULT_IMPORT, path_input.set_value)).props('outline dense')
-                audit_default = audit_source_folder if audit_source_folder and str(audit_source_folder) != folder.value else None
-                audit_input = ui.input('Audit folder (empty = same folder)', value=str(audit_default or '')).props('outlined dense').classes('w-full')
-                ui.button('Browse audit folder', on_click=lambda: browse_folder(audit_input.value or path_input.value, audit_input.set_value)).props('outline dense')
-            local_file = ui.select({}, label='Source file', with_input=True).props('outlined dense').classes('w-full').mark('local-source-file')
-            local_date = ui.select([], label='Log date (auto for one date)', clearable=True).props('outlined dense').classes('w-full')
-            import_bank = ui.select(list(core.BANK_AUDIT_CODES), label='Import Bank/Acquirer', value=bank.value).props('outlined dense').classes('w-full')
+            ui.label('Select an available date and bank/acquirer.').classes('text-sm')
+            source_message = ui.label().classes('text-sm whitespace-pre-wrap')
 
             def update_local_banks():
                 available = [b for b in core.BANK_AUDIT_CODES if any(
@@ -683,70 +684,56 @@ def index():
                 import_bank.set_options(available)
                 if import_bank.value not in available:
                     import_bank.set_value(bank.value if bank.value in available else (available[0] if available else None))
-                load_button.set_enabled(bool(available) and bool(local_file.value))
-
-            def select_file():
-                selected = next((item for item in local_files if item['path'] == local_file.value), None)
-                if selected:
-                    local_date.set_value(selected['date'])
-                    update_local_banks()
-
-            def select_date():
-                candidates = [item for item in local_files if item['date'] == local_date.value]
-                if local_file.value not in {item['path'] for item in candidates}:
-                    local_file.set_value(candidates[0]['path'] if candidates else None)
-                update_local_banks()
-
-            local_file.on_value_change(select_file)
-            local_date.on_value_change(select_date)
+                load_button.set_enabled(bool(available))
 
             async def inspect_folders():
-                nonlocal local_files, listing_revision
-                listing_revision += 1
-                revision = listing_revision
+                nonlocal local_files
                 load_button.disable()
+                local_date.disable()
                 try:
-                    files = await run.io_bound(list_local_source_files, *import_paths())
-                    if revision != listing_revision or dialog.is_deleted:
+                    files = await run.io_bound(list_local_source_files, log_source, audit_source)
+                    if dialog.is_deleted:
                         return
                     local_files = files
                     dates = sorted({item['date'] for item in files})
-                    local_file.set_options({item['path']: f"{item['kind']}: {item['name']}" for item in files})
-                    local_date.set_options(dates)
+                    local_date.props['options'] = [day.replace('-', '/') for day in dates]
+                    local_date.props['events'] = local_date.props['options']
+                    local_date.set_enabled(bool(dates))
+                    local_date.update()
                     local_date.set_value(source_day if source_day in dates else (dates[-1] if dates else None))
-                    select_date()
-                    source_message.set_text(f'{len(files)} source files; {len(dates)} dates available. Choose a file and bank/acquirer; all matching files for that date are used.')
+                    update_local_banks()
+                    source_message.set_text(f'{len(files)} source files; {len(dates)} dates available.' if dates else 'No dated source files found.')
                 except (OSError, ValueError) as error:
-                    if revision == listing_revision and not dialog.is_deleted:
-                        local_files = []
-                        local_file.set_options({})
-                        local_date.set_options([])
-                        import_bank.set_options([])
+                    if not dialog.is_deleted:
                         source_message.set_text(str(error))
-            if not fixed_sources:
-                path_input.on_value_change(inspect_folders)
-                audit_input.on_value_change(inspect_folders)
+
             async def choose_path():
                 nonlocal source_day, audit_source_folder
-                if not local_file.value or not import_bank.value or not local_date.value:
-                    ui.notify('Select a source file and an available bank/acquirer.', type='warning')
+                if not import_bank.value or not local_date.value:
+                    ui.notify('Select an available date and bank/acquirer.', type='warning')
                     return
-                log_source, audit_source = import_paths()
                 folder.set_value(str(log_source))
-                source_day = local_date.value or ''
+                source_day = local_date.value
                 audit_source_folder = audit_source
                 bank.set_value(import_bank.value)
                 clear_filters()
                 clear_bank_results()
                 dialog.close()
                 await load_source(local_import=True)
-            source_message = ui.label().classes('text-sm whitespace-pre-wrap')
-            load_button = ui.button('Load folder', on_click=choose_path)
-            load_button.disable()
-            ui.button('Cancel', on_click=dialog.close).props('flat')
+
+            local_date = ui.date(on_change=update_local_banks).mark('local-import-calendar')
+            local_date.props['options'] = []
+            local_date.props['events'] = []
+            local_date.props['event-color'] = 'green'
+            local_date.disable()
+            import_bank = ui.select([], label='Import Bank/Acquirer').props('outlined dense').classes('w-full')
+            ui.label('The selected bank loads first; other banks for the same date are prepared in the background.').classes('text-sm')
+            with ui.row():
+                load_button = ui.button('Load Files', on_click=choose_path)
+                load_button.disable()
+                ui.button('Cancel', on_click=dialog.close).props('flat')
         dialog.open()
-        if import_paths()[0].is_dir():
-            await inspect_folders()
+        await inspect_folders()
 
     async def remote_import_dialog():
         if busy:
@@ -956,6 +943,7 @@ def index():
                         ui.menu_item('Export', on_click=export_action)
                         ui.menu_item('Compare', on_click=lambda: export_action('compare'))
                     else:
+                        ui.menu_item('README', on_click=lambda: ui.navigate.to('/readme', new_tab=True)).mark('help-readme')
                         ui.menu_item('About', on_click=about)
 
     def panel(title):
@@ -1093,36 +1081,42 @@ def index():
     # Browser Ctrl +/- zooms the entire interface using the browser's native control.
 
 
-def run_web(*, port=8080, show=True, output=None):
+def run_web(*, port=8080, show=True, output=None, ssl_certfile=None, ssl_keyfile=None):
     global WEB_OUTPUT
     from nicegui import helpers
+    from web_tls import tls_options, local_tls_context
+    tls = tls_options(ssl_certfile, ssl_keyfile, default_folder=core.DEFAULT_CACHE / 'tls')
+    address = f'https://127.0.0.1:{port}'
     WEB_OUTPUT = Path(output or core.DEFAULT_OUTPUT)
     if not helpers.is_user_simulation() and not helpers.is_pytest():
         with socket.socket() as probe:
             occupied = probe.connect_ex(('127.0.0.1', port)) == 0
         if occupied:
             try:
-                with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=2) as response:
+                with urllib.request.urlopen(address + '/health', timeout=2,
+                                            context=local_tls_context(tls['ssl_certfile'])) as response:
                     existing = json.load(response)
                 if existing.get('app') != 'LogComparator' or existing.get('ui') != 'web':
                     raise ValueError('different service')
             except Exception:
                 raise RuntimeError(f'Port {port} is already in use. Start with --port and a free port.') from None
             if show:
-                webbrowser.open(f'http://127.0.0.1:{port}')
-            print(f'LogComparator is already running at http://127.0.0.1:{port}')
+                webbrowser.open(address)
+            print(f'LogComparator is already running at {address}')
             return 0
     ui.run(host='0.0.0.0', port=port, title=f'LogComparator {core.APP_BUILD_DESCRIBE}',
-           reload=False, show=show, favicon='🔎')
+           reload=False, show=show, **tls, favicon='🔎')
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description='LogComparator network web interface (NiceGUI / Quasar)')
     parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--ssl-certfile')
+    parser.add_argument('--ssl-keyfile')
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args()
-    return run_web(port=args.port, show=not args.no_browser)
+    return run_web(port=args.port, show=not args.no_browser, ssl_certfile=args.ssl_certfile, ssl_keyfile=args.ssl_keyfile)
 
 
 if __name__ in {'__main__', '__mp_main__'}:

@@ -12,12 +12,20 @@ services:
     ports:
       - "${LOGCOMPARATOR_PORT:-4020}:8080"
     environment:
+      LOGCOMPARATOR_SSL_CERTFILE: /data/tls/server.crt
+      LOGCOMPARATOR_SSL_KEYFILE: /data/tls/server.key
       LOGCOMPARATOR_LOG_DIR: /data/cache/local/log
       LOGCOMPARATOR_AUDIT_DIR: /data/cache/local/audit
       LOGCOMPARATOR_OUTPUT: /data/exports
       LOGCOMPARATOR_CACHE: /data/cache
       NICEGUI_STORAGE_PATH: /data/state
     volumes:
+      - type: bind
+        source: ${LOGCOMPARATOR_TLS_DIR:-./certs}
+        target: /data/tls
+        read_only: true
+        bind:
+          create_host_path: false
       - exports:/data/exports
       - cache:/data/cache
       - state:/data/state

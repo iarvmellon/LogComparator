@@ -19,3 +19,8 @@ tests
 *.gzip
 secrets
 .ssh
+
+# TLS certificates stay outside source control and image build contexts.
+certs/
+*.key
+*.pem

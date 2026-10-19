@@ -9,3 +9,8 @@ build_info.json
 .pytest_cache/
 .env
 .env.local
+
+# TLS certificates stay outside source control and image build contexts.
+certs/
+*.key
+*.pem

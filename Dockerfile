@@ -1,10 +1,12 @@
 FROM python:3.13-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
+    LOGCOMPARATOR_SSL_CERTFILE=/data/tls/server.crt \
+    LOGCOMPARATOR_SSL_KEYFILE=/data/tls/server.key \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    LOGCOMPARATOR_LOG_DIR=/opt/tango/MLNPSP01/log \
-    LOGCOMPARATOR_AUDIT_DIR=/opt/tango/MLNPSP01/audit \
+    LOGCOMPARATOR_LOG_DIR=/opt/tango/log \
+    LOGCOMPARATOR_AUDIT_DIR=/opt/tango/audit \
     LOGCOMPARATOR_OUTPUT=/data/exports \
     LOGCOMPARATOR_CACHE=/data/cache \
     NICEGUI_STORAGE_PATH=/data/state \
@@ -15,7 +17,7 @@ COPY pyproject.toml requirements.txt ./
 COPY logcomparator_ui/ ./logcomparator_ui/
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY main.py windows_runtime.py web_app.py web_services.py gui_services.py remote_logs.py log_config.py log_core.py source_memory.py ./
+COPY main.py windows_runtime.py web_app.py web_services.py gui_services.py remote_logs.py log_config.py log_core.py source_memory.py web_tls.py create_https_certificate.py README.md ./
 COPY diagnostic_common.py transaction_checks.py iso_checks.py spdh_checks.py tango_checks.py emv_checks.py ./
 
 ARG BUILD_DESCRIBE=container
@@ -25,6 +27,6 @@ RUN python -c "import json,os; from pathlib import Path; Path('build_info.json')
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).read()"]
+    CMD ["python", "web_tls.py"]
 ENTRYPOINT ["python", "main.py"]
 CMD ["--no-browser", "--port", "8080"]

@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("-o", "--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument('--port', type=int, default=8080, help='Web interface port (default: 8080).')
+    parser.add_argument('--ssl-certfile', help='HTTPS certificate PEM file (or LOGCOMPARATOR_SSL_CERTFILE).')
+    parser.add_argument('--ssl-keyfile', help='HTTPS private key PEM file (or LOGCOMPARATOR_SSL_KEYFILE).')
     parser.add_argument('--no-browser', action='store_true', help='Start the web server without opening a browser.')
     parser.add_argument(
         "--tango-log",
@@ -77,7 +79,7 @@ def main() -> int:
     output_dir = args.output.expanduser().resolve()
     if not args.input:
         from web_app import run_web
-        return run_web(port=args.port, show=not args.no_browser, output=output_dir)
+        return run_web(port=args.port, show=not args.no_browser, output=output_dir, ssl_certfile=args.ssl_certfile, ssl_keyfile=args.ssl_keyfile)
 
     input_paths = [path.expanduser().resolve() for path in args.input]
     missing = [path for path in input_paths if not path.is_file()]

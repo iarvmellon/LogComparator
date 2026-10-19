@@ -11,21 +11,29 @@ services:
     ports:
       - "${LOGCOMPARATOR_PORT:-4020}:8080"
     environment:
-      LOGCOMPARATOR_LOG_DIR: /opt/tango/MLNPSP01/log
-      LOGCOMPARATOR_AUDIT_DIR: /opt/tango/MLNPSP01/audit
+      LOGCOMPARATOR_SSL_CERTFILE: /data/tls/server.crt
+      LOGCOMPARATOR_SSL_KEYFILE: /data/tls/server.key
+      LOGCOMPARATOR_LOG_DIR: /opt/tango/log
+      LOGCOMPARATOR_AUDIT_DIR: /opt/tango/audit
       LOGCOMPARATOR_OUTPUT: /data/exports
       LOGCOMPARATOR_CACHE: /data/cache
       NICEGUI_STORAGE_PATH: /data/state
     volumes:
       - type: bind
-        source: ${TANGO_LOG_DIR:-/opt/tango/MLNPSP01/log}
-        target: /opt/tango/MLNPSP01/log
+        source: ${LOGCOMPARATOR_TLS_DIR:-./certs}
+        target: /data/tls
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${TANGO_AUDIT_DIR:-/opt/tango/MLNPSP01/audit}
-        target: /opt/tango/MLNPSP01/audit
+        source: ${TANGO_LOG_DIR:-/opt/tango/log}
+        target: /opt/tango/log
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TANGO_AUDIT_DIR:-/opt/tango/audit}
+        target: /opt/tango/audit
         read_only: true
         bind:
           create_host_path: false

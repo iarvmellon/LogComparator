@@ -218,18 +218,17 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(any(e.props.get('label') in ('Browse folders', 'Browse audit folder', 'Inspect dates and banks')
                                      for e in user.find(ui.button).elements))
                 self.assertTrue(max(user.find(ui.dialog).elements, key=lambda e: e.id).value)
-                dates = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Log date (auto for one date)')
+                dates = next(iter(user.find(marker='local-import-calendar').elements))
                 for _ in range(100):
-                    if len(dates.options) == 2:
+                    if len(dates.props['options']) == 2:
                         break
                     await asyncio.sleep(0.1)
-                self.assertEqual(dates.options, ['2026-10-14', '2026-10-15'])
+                self.assertEqual(dates.props['options'], ['2026/10/14', '2026/10/15'])
                 with user:
                     dates.set_value('2026-10-14')
-                source_select = next(iter(user.find(marker='local-source-file').elements))
-                self.assertIn(str((logs / 'tango.log.2026-10-14').resolve()), source_select.options)
+                self.assertFalse(any(e.props.get('label') == 'Source file' for e in user.find(ui.select).elements))
                 self.assertEqual(dates.value, '2026-10-14')
-                user.find('Load folder').click()
+                user.find('Load Files').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
@@ -376,7 +375,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     user.find(marker='import-menu').click()
                     await asyncio.sleep(0.1)  # let the new dialog be created before selecting its button
                     await user.should_see('Import local log folder')
-                    max(user.find('Load folder').elements, key=lambda element: element.id).mark('latest-local-load')
+                    max(user.find('Load Files').elements, key=lambda element: element.id).mark('latest-local-load')
                     user.find(marker='latest-local-load').click()
                     for _ in range(100):
                         if not any(dialog.value for dialog in user.find(ui.dialog).elements) and not inspect.getclosurevars(load_callback).nonlocals['busy']:
@@ -439,6 +438,10 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             source_fixture(folder)
             output_patch = patch('log_core.DEFAULT_OUTPUT', folder / 'exports')
             output_patch.start()
+            local_log_patch = patch('log_core.DEFAULT_IMPORT', folder)
+            local_audit_patch = patch('log_core.LOCAL_AUDIT_DIR', folder)
+            local_log_patch.start()
+            local_audit_patch.start()
             with patch('sys.argv', ['web_app.py', '--no-browser']):
                 simulation = user_simulation(main_file=Path(__file__).resolve().parents[1] / 'web_app.py')
                 user = await simulation.__aenter__()
@@ -446,6 +449,17 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 await user.open('/')
                 inputs = {element.props.get('label'): element for element in user.find(ui.input).elements}
                 self.assertFalse(any('Source date' in (label or '') for label in inputs))
+                with patch.object(user.navigate, 'to') as navigate:
+                    user.find(marker='help-readme').click()
+                    navigate.assert_called_once_with('/readme', new_tab=True)
+                guide = await user.http_client.get('/readme')
+                self.assertEqual(guide.status_code, 200)
+                self.assertIn('<h1>LogComparator</h1>', guide.text)
+                self.assertIn('Import local logs', guide.text)
+                self.assertIn('Import remote logs', guide.text)
+                self.assertIn('Selection viewer', guide.text)
+                self.assertIn('<table>', guide.text)
+
                 selects = {element.props.get('label'): element for element in user.find(ui.select).elements}
                 self.assertEqual(selects['Timezone'].options, ['UTC-3', 'UTC-2', 'UTC-1', 'UTC', 'UTC+1', 'UTC+2', 'UTC+3'])
                 with user:
@@ -460,9 +474,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 local_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
                 local_selects = {e.props.get('label'): e for e in user.find(ui.select).elements}
                 with user:
-                    local_inputs['Folder path'].set_value(str(folder))
                     local_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
-                user.find('Load folder').click()
+                user.find('Load Files').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
@@ -548,9 +561,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 import_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
                 import_selects = {e.props.get('label'): e for e in user.find(ui.select).elements}
                 with user:
-                    import_inputs['Folder path'].set_value(str(folder))
                     import_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
-                user.find('Load folder').click()
+                user.find('Load Files').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
                 from nicegui import run
                 original_io_bound = run.io_bound
@@ -583,6 +595,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await simulation.__aexit__(None, None, None)
                 output_patch.stop()
+                local_audit_patch.stop()
+                local_log_patch.stop()
 
 
 if __name__ == '__main__':
