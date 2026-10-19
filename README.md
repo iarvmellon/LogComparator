@@ -322,6 +322,9 @@ running the transferred image.
 
 ## Docker
 
+The container is named `logComparator` and the image is `logcomparator_iarv:latest`.
+The Compose service is still named `logcomparator`, as used in Compose commands.
+
 ### First deployment: configure the server
 
 Put the Compose files in the project directory on the Docker host.
@@ -390,7 +393,7 @@ Set `LOGCOMPARATOR_TLS_DIR` in `.env` if it is not the default `./certs`.
 The folder must contain `server.crt` and `server.key`, readable by container
 user `10001`. Certificates are kept outside the image so an update preserves them.
 
-After building or loading `logcomparator:local`, create a temporary self-signed
+After building or loading `logcomparator_iarv:latest`, create a temporary self-signed
 certificate on Linux. These commands use Python already inside the image and
 need no internet access or additional Linux packages:
 
@@ -398,7 +401,7 @@ need no internet access or additional Linux packages:
 sudo mkdir -p certs
 sudo chown 10001:10001 certs
 sudo chmod 700 certs
-sudo docker run --rm --network none --mount "type=bind,source=$(pwd)/certs,target=/certs" --entrypoint python logcomparator:local create_https_certificate.py --host 10.1.110.84 --output /certs
+sudo docker run --rm --network none --mount "type=bind,source=$(pwd)/certs,target=/certs" --entrypoint python logcomparator_iarv:latest create_https_certificate.py --host 10.1.110.84 --output /certs
 ```
 
 Use your server's actual IP or DNS name in `--host`; repeat the option to include
@@ -422,9 +425,9 @@ folder, using the version of the code you want to deploy:
 
 ```powershell
 cd C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
-docker build --platform linux/amd64 --build-arg BUILD_DESCRIBE="$(git describe --tags --always --dirty)" --build-arg BUILD_GIT_HASH="$(git rev-parse --short=12 HEAD)" -t logcomparator:local .
+docker build --platform linux/amd64 --build-arg BUILD_DESCRIBE="$(git describe --tags --always --dirty)" --build-arg BUILD_GIT_HASH="$(git rev-parse --short=12 HEAD)" -t logcomparator_iarv:latest .
 
-docker save -o logcomparator.tar logcomparator:local
+docker save -o logcomparator.tar logcomparator_iarv:latest
 ```
 
 `logcomparator.tar` is a generated build file and is excluded from Git.

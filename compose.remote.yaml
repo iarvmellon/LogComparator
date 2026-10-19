@@ -6,7 +6,8 @@ services:
       args:
         BUILD_DESCRIBE: ${LOGCOMPARATOR_VERSION:-container}
         BUILD_GIT_HASH: ${LOGCOMPARATOR_GIT_HASH:-unknown}
-    image: logcomparator:local
+    image: logcomparator_iarv:latest
+    container_name: logComparator
     restart: unless-stopped
     init: true
     ports:
