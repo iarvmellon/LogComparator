@@ -456,12 +456,18 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     inputs['TransUID'].set_value('')
                     table.selected = []
                 user.find(ui.table).trigger('selection', {'added': True, 'rows': list(table.rows), 'keys': [row['transuid'] for row in table.rows]})
-                user.find(kind=ui.button, content='Compare').click()
-                await user.should_see('Compare transactions', retries=100)
-                await user.should_see(marker='diff2html-comparison')
+                with patch.object(user.navigate, 'to') as navigate:
+                    user.find(kind=ui.button, content='Compare').click()
+                    await user.should_see('Exported 2 transaction(s).', retries=100)
+                    navigate.assert_called_once()
+                    self.assertTrue(navigate.call_args.kwargs['new_tab'])
+                    comparison_url = navigate.call_args.args[0]
+                comparison = await user.http_client.get(comparison_url)
+                self.assertEqual(comparison.status_code, 200)
+                self.assertIn('diff2html-comparison', comparison.text)
+                self.assertIn('Download diff', comparison.text)
                 assets = await user.http_client.get('/logcomparator-assets/diff2html-ui-base.min.js')
                 self.assertEqual(assets.status_code, 200)
-                user.find('Close').click()
                 with patch.object(user.navigate, 'to') as navigate:
                     user.find(kind=ui.button, content='Open').click()
                     await asyncio.sleep(0.1)
@@ -491,8 +497,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 user.find(marker='export-options-menu').click()
                 await user.should_see('Export options')
                 user.find(kind=ui.button, content='Close').click()
-                user.find(marker='close-workspace').click()
-                self.assertEqual(table.rows, [])
+                self.assertFalse(any(e.text == 'Close workspace' for e in user.find(ui.item_section).elements))
                 user.find(marker='import-menu').click()
                 await user.should_see('Import local log folder')
                 import_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}

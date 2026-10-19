@@ -105,8 +105,7 @@ already-running LogComparator server instead of starting a conflicting copy.
 Use `--port 8081` for another port. Keep the server process running. To stop
 the background Windows executable, end LogComparator in Task Manager. For
 source/terminal runs, Ctrl+C stops the server; use `python main.py` for CLI
-output in a terminal. **File > Close workspace** closes only that browser
-workspace so other users can continue working.
+output in a terminal. Close the browser tab to leave the workspace.
 
 The interface has no login. Users who can reach it can access the server's log
 folders and configured UAT operations; run it on a trusted internal network.
@@ -459,7 +458,7 @@ and restarting an existing image does not change its version metadata.
 | Export logs to disk | Saved server exports plus log/ZIP browser download |
 | Right-click Open / Export / Compare | Row context menu |
 | Export options, settings, font size and About | File / Tools / View / Help menus |
-| Exit native window | File > Close workspace; Ctrl+C stops the shared server |
+| Exit native window | Close the browser tab; Ctrl+C stops the shared server |
 
 ## Installation and building
 
@@ -1139,3 +1138,7 @@ The sequence-number column and its filter are labeled **SeqNo**.
 Table widths are also enforced through physical column tracks and border-box cells, including custom cell templates, to keep the final Possible problem column inside the viewport.
 
 All Python and JavaScript tests, plus their dependency list, are located in `testing/`. Run the commands above from the project root.
+
+The File menu contains Import local logs, Import remote logs (UAT), Export and Settings. Open remains available in the toolbar and Tools menu.
+
+Compare opens diff2html in a separate browser tab with synchronized panes, previous/next difference controls and Download diff. It uses a standalone snapshot page rather than a popup dialog.

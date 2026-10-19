@@ -24,7 +24,7 @@ from string import Template
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from nicegui import app, run, ui
 from nicegui.translations import translations
-from logcomparator_ui.diff_view import DiffView, register_assets
+from logcomparator_ui.diff_view import register_assets
 
 import log_core as core
 from web_services import (COLUMNS, comparison_diff, export_logs,
@@ -37,6 +37,7 @@ from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, li
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
 PREVIEW_SOURCES = OrderedDict()
 PREVIEW_DOWNLOADS = OrderedDict()
+COMPARISONS = OrderedDict()
 WEB_OUTPUT = core.DEFAULT_OUTPUT
 register_assets()
 # The reconnect overlay is rendered by NiceGUI outside the page content.
@@ -120,6 +121,17 @@ def transaction_download(token: str):
     if path is None or not path.is_file():
         return JSONResponse({'error': 'This download has expired. Reopen the transaction.'}, status_code=404)
     return FileResponse(path, filename=path.name, media_type='text/plain', headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/comparison/{token}', response_class=HTMLResponse)
+def comparison_page(token: str):
+    entry = COMPARISONS.get(token)
+    if entry is None:
+        return HTMLResponse('This comparison has expired. Compare the transactions again.', status_code=404)
+    left, right, diff = entry
+    document = Path(__file__).with_name('logcomparator_ui').joinpath('assets', 'comparison.html').read_text(encoding='utf-8')
+    data = json.dumps({'left': left, 'right': right, 'diff': diff}).replace('<', '\\u003c')
+    return HTMLResponse(document.replace('__COMPARISON_DATA__', data), headers={'Cache-Control': 'no-store'})
 
 CSS = '''
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
@@ -551,21 +563,12 @@ def index():
                     ui.download.content(await run.io_bound(archive), f'LogComparator-{loaded.selected_date}.zip')
             else:
                 texts = await run.io_bound(lambda: [path.read_text(encoding='utf-8', errors='replace') for path in paths])
-                with ui.dialog() as dialog, ui.card().classes('w-full max-w-[95vw]'):
-                    with ui.row().classes('w-full items-center justify-between'):
-                        ui.label('Compare transactions - diff2html').classes('text-lg')
-                        ui.button('Close', on_click=dialog.close).props('flat')
-                    ui.label(f'{paths[0].name}  |  {paths[1].name}').classes('text-sm')
-                    diff = comparison_diff(texts[0], texts[1], paths[0].name, paths[1].name)
-                    if diff:
-                        with ui.row():
-                            ui.button('Previous difference', on_click=lambda: viewer.previous_difference()).props('outline dense')
-                            ui.button('Next difference', on_click=lambda: viewer.next_difference()).props('outline dense')
-                            ui.button('Download diff', on_click=lambda: ui.download.content(diff, 'comparison.diff')).props('outline dense')
-                        viewer = DiffView(diff).mark('diff2html-comparison')
-                    else:
-                        ui.label('The exported logs are identical.')
-                dialog.open()
+                diff = comparison_diff(texts[0], texts[1], paths[0].name, paths[1].name)
+                token = uuid.uuid4().hex
+                COMPARISONS[token] = (paths[0].name, paths[1].name, diff)
+                while len(COMPARISONS) > 128:
+                    COMPARISONS.popitem(last=False)
+                ui.navigate.to(f'/comparison/{token}', new_tab=True)
             status.set_text(f'Exported {len(paths)} transaction(s). Saved to {saved_to}')
         await perform(action)
 
@@ -886,10 +889,8 @@ def index():
                     if label == 'File':
                         ui.menu_item('Import local logs', on_click=import_dialog).mark('import-menu')
                         ui.menu_item('Import remote logs (UAT)', on_click=remote_import_dialog).mark('remote-import-menu')
-                        ui.menu_item('Open', on_click=lambda: export_action('open'))
                         ui.menu_item('Export', on_click=export_action)
                         ui.menu_item('Settings', on_click=settings_dialog).mark('settings-menu')
-                        ui.menu_item('Close workspace', on_click=close_workspace).mark('close-workspace')
                     elif label == 'Edit':
                         ui.menu_item('Clear filters', on_click=clear_filters)
                         ui.menu_item('Select all visible', on_click=lambda: (setattr(table, 'selected', list(table.rows)), table.update(), selection_changed()))
