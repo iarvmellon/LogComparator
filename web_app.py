@@ -29,7 +29,7 @@ from logcomparator_ui.diff_view import register_assets
 import log_core as core
 from web_services import (COLUMNS, comparison_diff, export_logs,
                           filter_rows, load_logs, publish_exports)
-from web_services import inspect_local_sources, source_signature, SourceWatcher
+from web_services import list_local_source_files, LocalAuditJob, source_signature, SourceWatcher
 from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, list_remote_sources,
                          audit_date, banks_for_audits, names_for_bank, read_remote_files as download_audits, read_remote_logs as download_tango_logs,
                          RemoteSourceWatcher, RemoteAuditJob, is_transient_ssh_error)
@@ -438,7 +438,7 @@ def index():
                 if not folder_value.strip():
                     raise ValueError('Enter a log folder or use File > Import local logs.')
                 source = Path(folder_value)
-                if background_job and source.resolve() != background_job.folder:
+                if background_job and (local_import or source.resolve() != background_job.folder):
                     background_job.cancel_event.set()
                     background_job = None
                     pending_bank = None
@@ -494,6 +494,15 @@ def index():
                     background_status.set_text('Reading and preparing other banks for the selected date in the background.')
                 else:
                     background_status.set_text('SSH live update reads only the selected bank for today.' if live_enabled.value else 'Historical files loaded; live update is off.')
+            elif local_import:
+                files = await run.io_bound(list_local_source_files, result.folder, result.audit_folder)
+                other_banks = [b for b in core.BANK_AUDIT_CODES if b != bank_value and any(
+                    item['kind'] == 'Audit' and item['date'] == source_day and b in item['banks'] for item in files)]
+                if other_banks:
+                    background_job = LocalAuditJob(result.folder, other_banks, source_day, audit_folder=result.audit_folder)
+                    background_status.set_text('Reading and preparing other local banks for the selected date in the background.')
+                else:
+                    background_status.set_text('Selected local bank ready; live update is off.')
         await perform(action, quiet=live)
 
     def options():
@@ -645,6 +654,8 @@ def index():
     async def import_dialog():
         fixed_sources = core.LOCAL_AUDIT_DIR is not None
         path_input = audit_input = None
+        local_files = []
+        listing_revision = 0
 
         def import_paths():
             if fixed_sources:
@@ -662,36 +673,76 @@ def index():
                 audit_default = audit_source_folder if audit_source_folder and str(audit_source_folder) != folder.value else None
                 audit_input = ui.input('Audit folder (empty = same folder)', value=str(audit_default or '')).props('outlined dense').classes('w-full')
                 ui.button('Browse audit folder', on_click=lambda: browse_folder(audit_input.value or path_input.value, audit_input.set_value)).props('outline dense')
+            local_file = ui.select({}, label='Source file', with_input=True).props('outlined dense').classes('w-full').mark('local-source-file')
             local_date = ui.select([], label='Log date (auto for one date)', clearable=True).props('outlined dense').classes('w-full')
             import_bank = ui.select(list(core.BANK_AUDIT_CODES), label='Import Bank/Acquirer', value=bank.value).props('outlined dense').classes('w-full')
 
+            def update_local_banks():
+                available = [b for b in core.BANK_AUDIT_CODES if any(
+                    item['kind'] == 'Audit' and item['date'] == local_date.value and b in item['banks'] for item in local_files)]
+                import_bank.set_options(available)
+                if import_bank.value not in available:
+                    import_bank.set_value(bank.value if bank.value in available else (available[0] if available else None))
+                load_button.set_enabled(bool(available) and bool(local_file.value))
+
+            def select_file():
+                selected = next((item for item in local_files if item['path'] == local_file.value), None)
+                if selected:
+                    local_date.set_value(selected['date'])
+                    update_local_banks()
+
+            def select_date():
+                candidates = [item for item in local_files if item['date'] == local_date.value]
+                if local_file.value not in {item['path'] for item in candidates}:
+                    local_file.set_value(candidates[0]['path'] if candidates else None)
+                update_local_banks()
+
+            local_file.on_value_change(select_file)
+            local_date.on_value_change(select_date)
+
             async def inspect_folders():
+                nonlocal local_files, listing_revision
+                listing_revision += 1
+                revision = listing_revision
+                load_button.disable()
                 try:
-                    dates, banks = await run.io_bound(inspect_local_sources, *import_paths())
+                    files = await run.io_bound(list_local_source_files, *import_paths())
+                    if revision != listing_revision or dialog.is_deleted:
+                        return
+                    local_files = files
+                    dates = sorted({item['date'] for item in files})
+                    local_file.set_options({item['path']: f"{item['kind']}: {item['name']}" for item in files})
                     local_date.set_options(dates)
-                    if dates:
-                        local_date.set_value(source_day if source_day in dates else dates[-1])
-                    if banks:
-                        import_bank.set_options(banks)
-                        if import_bank.value not in banks:
-                            import_bank.set_value(banks[0])
-                    ui.notify(f'{len(dates)} log dates; {len(banks)} banks available.', type='info')
+                    local_date.set_value(source_day if source_day in dates else (dates[-1] if dates else None))
+                    select_date()
+                    source_message.set_text(f'{len(files)} source files; {len(dates)} dates available. Choose a file and bank/acquirer; all matching files for that date are used.')
                 except (OSError, ValueError) as error:
-                    ui.notify(str(error), type='negative')
+                    if revision == listing_revision and not dialog.is_deleted:
+                        local_files = []
+                        local_file.set_options({})
+                        local_date.set_options([])
+                        import_bank.set_options([])
+                        source_message.set_text(str(error))
             if not fixed_sources:
                 path_input.on_value_change(inspect_folders)
                 audit_input.on_value_change(inspect_folders)
             async def choose_path():
                 nonlocal source_day, audit_source_folder
+                if not local_file.value or not import_bank.value or not local_date.value:
+                    ui.notify('Select a source file and an available bank/acquirer.', type='warning')
+                    return
                 log_source, audit_source = import_paths()
                 folder.set_value(str(log_source))
                 source_day = local_date.value or ''
                 audit_source_folder = audit_source
                 bank.set_value(import_bank.value)
                 clear_filters()
+                clear_bank_results()
                 dialog.close()
                 await load_source(local_import=True)
-            ui.button('Load folder', on_click=choose_path)
+            source_message = ui.label().classes('text-sm whitespace-pre-wrap')
+            load_button = ui.button('Load folder', on_click=choose_path)
+            load_button.disable()
             ui.button('Cancel', on_click=dialog.close).props('flat')
         dialog.open()
         if import_paths()[0].is_dir():

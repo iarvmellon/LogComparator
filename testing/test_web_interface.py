@@ -24,6 +24,48 @@ def source_fixture(folder):
 
 
 class WebServicesTests(unittest.TestCase):
+    def test_local_file_listing_includes_each_day_and_compression_without_reading_logs(self):
+        from web_services import list_local_source_files
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logs, audits = root / 'logs', root / 'audits'
+            logs.mkdir()
+            audits.mkdir()
+            (logs / 'tango.log.2026-10-14.gz').write_bytes(b'not read during listing')
+            (logs / 'tango.log.2026-10-15').write_text('')
+            (audits / 'audit.OPNBISOBKT01.20261014.gz').write_bytes(b'not read during listing')
+            (audits / 'unrelated.txt').write_text('')
+            files = list_local_source_files(logs, audits)
+            self.assertEqual(len(files), 3)
+            self.assertEqual({item['date'] for item in files}, {'2026-10-14', '2026-10-15'})
+            audit = next(item for item in files if item['kind'] == 'Audit')
+            self.assertIn('AKTIF/BKT', audit['banks'])
+            self.assertEqual(audit['path'], str((audits / 'audit.OPNBISOBKT01.20261014.gz').resolve()))
+
+    def test_local_background_prepares_ready_results_with_separate_audit_folder(self):
+        from web_services import LocalAuditJob
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logs, audits = root / 'logs', root / 'audits'
+            logs.mkdir()
+            audits.mkdir()
+            source_fixture(root)
+            for path in root.glob('audit.*'):
+                path.rename(audits / path.name)
+            for path in root.glob('tango.log.*'):
+                path.rename(logs / path.name)
+            job = LocalAuditJob(logs, ['AKTIF/BKTKOS'], '2026-10-14', audit_folder=audits)
+            try:
+                self.assertTrue(job.done.wait(10))
+                self.assertIsNone(job.error)
+                with patch('web_services._load_logs', side_effect=AssertionError('must use prepared bank')):
+                    prepared = load_logs(logs, 'AKTIF/BKTKOS', '2026-10-14', audit_folder=audits)
+                self.assertEqual(prepared.audit_folder, audits.resolve())
+                self.assertEqual(len(prepared.rows), 2)
+            finally:
+                job.cancel_event.set()
+                job.thread.join(10)
+
     @patch('log_core.current_log_date', return_value='2026-10-14')
     def test_filesystem_watcher_detects_writes_and_stops(self, current_day):
         from web_services import SourceWatcher
@@ -184,6 +226,9 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(dates.options, ['2026-10-14', '2026-10-15'])
                 with user:
                     dates.set_value('2026-10-14')
+                source_select = next(iter(user.find(marker='local-source-file').elements))
+                self.assertIn(str((logs / 'tango.log.2026-10-14').resolve()), source_select.options)
+                self.assertEqual(dates.value, '2026-10-14')
                 user.find('Load folder').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
                 table = next(iter(user.find(ui.table).elements))

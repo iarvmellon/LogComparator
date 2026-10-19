@@ -1142,3 +1142,5 @@ All Python and JavaScript tests, plus their dependency list, are located in `tes
 The File menu contains Import local logs, Import remote logs (UAT), Export and Settings. Open remains available in the toolbar and Tools menu.
 
 Compare opens diff2html in a separate browser tab with synchronized panes, previous/next difference controls and Download diff. It uses a standalone snapshot page rather than a popup dialog.
+
+Local import lists available Tango and audit source files (plain or gzip) in the chosen log/audit folders. Select a source file to choose its day, then choose an available Bank/Acquirer for that day. All matching source files for the day are used, as with remote import. Only the selected bank is displayed first; other banks for the same day are prepared in the background, using the original audit folder even when it differs from the log folder. Background work yields to bank changes and is cancelled when another local source is imported. Live update starts off.

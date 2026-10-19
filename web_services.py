@@ -175,6 +175,49 @@ def inspect_local_sources(log_folder: Path, audit_folder: Path | None = None):
     return dates, core.available_banks_for_folder(audit_folder)
 
 
+def list_local_source_files(log_folder: Path, audit_folder: Path | None = None):
+    """List dated source files without reading their contents."""
+    from remote_logs import audit_date, banks_for_audits
+    log_folder = Path(log_folder).expanduser().resolve()
+    audit_folder = Path(audit_folder or log_folder).expanduser().resolve()
+    if not log_folder.is_dir() or not audit_folder.is_dir():
+        raise ValueError('Choose existing log and audit folders.')
+    records = []
+    for folder, kind in ((log_folder, 'Tango log'), (audit_folder, 'Audit')):
+        for path in folder.iterdir():
+            if not path.is_file() or path.name.lower().endswith(('.tar.gz', '.tgz')):
+                continue
+            day = core.parse_log_date(path.name) if kind == 'Tango log' else audit_date(path.name)
+            if not day or (kind == 'Audit' and not path.name.startswith(('audit.OPN', 'audit.PTMS'))):
+                continue
+            records.append(dict(path=str(path), name=path.name, kind=kind, date=day,
+                                banks=banks_for_audits([path.name]) if kind == 'Audit' else []))
+    return sorted(records, key=lambda item: (item['date'], item['name'], item['path']))
+
+
+class LocalAuditJob:
+    """Prepare local banks after the selected bank, with foreground priority."""
+    def __init__(self, folder, banks, selected_date, *, audit_folder=None):
+        self.folder = Path(folder).resolve()
+        self.cancel_event = threading.Event()
+        self.done = threading.Event()
+        self.messages = queue.Queue()
+        self.error = None
+        def worker():
+            try:
+                prepare_bank_results(self.folder, banks, selected_date, self.cancel_event,
+                                     self.messages.put, audit_folder=audit_folder)
+                if not self.cancel_event.is_set():
+                    self.messages.put('Background bank results ready')
+            except Exception as error:
+                self.error = str(error)
+                self.messages.put(f'Background preparation failed: {error}')
+            finally:
+                self.done.set()
+        self.thread = threading.Thread(target=worker, daemon=True)
+        self.thread.start()
+
+
 def source_signature(folder: Path, audit_folder: Path | None, selected_date: str, bank: str):
     """Cheap change detection, including rotation, replacement and new audit files."""
     paths = [Path(p) for p in core.list_local_logs(folder)
@@ -248,7 +291,7 @@ def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *
                 FOREGROUND_PENDING.clear()
 
 
-def prepare_bank_results(folder, banks, selected_date, cancel_event, message=None):
+def prepare_bank_results(folder, banks, selected_date, cancel_event, message=None, *, audit_folder=None):
     """Prepare each bank once; foreground requests can interrupt and take priority."""
     for bank in banks:
         if cancel_event.is_set():
@@ -257,7 +300,7 @@ def prepare_bank_results(folder, banks, selected_date, cancel_event, message=Non
             message(f'Preparing {bank} for {selected_date} in the background')
         try:
             while not cancel_event.is_set():
-                result = load_logs(folder, bank, selected_date, background=True, cancel_event=cancel_event)
+                result = load_logs(folder, bank, selected_date, background=True, cancel_event=cancel_event, audit_folder=audit_folder)
                 if result is not None:
                     break
                 cancel_event.wait(0.1)
