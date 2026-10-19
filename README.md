@@ -102,7 +102,7 @@ any findings from the checks.
 **Possible problem** describes the finding. The table shows up to 100 characters;
 hover over the field to read the complete description.
 
-Click a column heading to sort the list. Use the controls below the table to
+Click a column heading to sort the list. Drag its right edge to change that column's width. Double-click the edge to restore its automatic width. Manual widths stay in effect while filtering or changing banks in the same workspace; if the table becomes wider than the window, scroll horizontally. Reloading the workspace restores automatic sizing. Use the controls below the table to
 change pages or the number of rows per page.
 
 ## Filtering the list
@@ -175,6 +175,10 @@ rows have a blue outline and keep their result color. You can select several row
   including those on other table pages.
 - **Edit > Clear selection** deselects all rows.
 
+Selected single-transaction logs are prepared ahead of Open and reused while their source and options stay unchanged. Preview generation takes priority over background bank preparation. The log appears before its output-folder copy finishes. If that copy fails, the transaction tab reports it.
+
+When opening several transactions, their tabs are requested directly from your click. If the browser blocks additional tabs, allow pop-ups for this site and click Open again.
+
 An opened transaction log is a snapshot. It does not refresh automatically when
 the main list updates. Right-click a row for **Open**, **Export**, and **Compare**.
 
@@ -209,7 +213,9 @@ These settings control the generated log contents. They do not filter table rows
 ## Comparing two transactions
 
 Select exactly two transactions and click **Compare**. A separate browser tab
-opens with their logs side by side in diff2html. Additions and deletions are
+opens directly from the click, then prepares their logs side by side in diff2html.
+A loading message appears while the comparison is being generated, and any error
+is shown in that tab. Additions and deletions are
 highlighted, and horizontal scrolling is synchronized between the two sides.
 
 - **Previous difference / Next difference** moves between changes.
@@ -417,23 +423,7 @@ folder, using the version of the code you want to deploy:
 ```powershell
 cd C:\Users\j.arvanitis\Desktop\Tango\github\LogComparator
 docker build --platform linux/amd64 --build-arg BUILD_DESCRIBE="$(git describe --tags --always --dirty)" --build-arg BUILD_GIT_HASH="$(git rev-parse --short=12 HEAD)" -t logcomparator:local .
-```
 
-This command builds the application and includes its Python dependencies,
-browser assets and README. The Windows machine needs internet access for any
-base image or dependencies that are not already cached. `linux/amd64` targets
-an Intel/AMD 64-bit server; use `linux/arm64` for an ARM64 server.
-
-Check the image before transferring it:
-
-```powershell
-docker run --rm --network none --entrypoint python logcomparator:local -c "import main, web_app, web_services, source_memory; import log_config; print(log_config.APP_BUILD_DESCRIBE)"
-```
-
-The command must finish without an import error and print the expected version.
-Then save the complete image:
-
-```powershell
 docker save -o logcomparator.tar logcomparator:local
 ```
 
@@ -612,6 +602,7 @@ All tests and their dependency list are in `testing/`. Run from the project root
 .\.venv\Scripts\python.exe -m pytest testing -q
 node testing/test_diff2html.js
 node testing/test_table_sizing.js
+node testing/test_browser_actions.js
 ```
 
 ## Command-line analysis

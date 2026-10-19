@@ -56,6 +56,7 @@ export function installColumnSizing(component) {
   const root = component.$el;
   const context = document.createElement('canvas').getContext('2d');
   let frame = null, cacheKey = '', widths = {};
+  const manualWidths = new Map();
   const fit = async () => {
     frame = null;
     await component.$nextTick();
@@ -81,6 +82,9 @@ export function installColumnSizing(component) {
     const minimum = Object.fromEntries(columns.map(column => [column.name,
       Math.ceil(context.measureText(String(column.label ?? column.name)).width + 20 + (column.sortable ? 24 : 0))]));
     const fitted = fitColumnWidths(columns, widths, available, selectionWidth, minimum);
+    for (const column of columns) {
+      if (manualWidths.has(column.name)) fitted[column.name] = manualWidths.get(column.name);
+    }
     let total = selectionWidth;
     for (const column of columns) {
       const width = fitted[column.name];
@@ -97,11 +101,55 @@ export function installColumnSizing(component) {
     }
     const tracks = [...(selectionWidth ? [selectionWidth] : []), ...columns.map(column => fitted[column.name])];
     colgroup.innerHTML = tracks.map(width => `<col style="width:${width}px">`).join('');
-    htmlTable.style.maxWidth = '100%';
+    htmlTable.style.maxWidth = manualWidths.size ? 'none' : '100%';
     htmlTable.style.tableLayout = 'fixed';
     htmlTable.style.width = `${total}px`;
     htmlTable.style.minWidth = `${total}px`;
-    if (middle) middle.scrollLeft = 0;
+    if (middle && !manualWidths.size) middle.scrollLeft = 0;
+    await component.$nextTick();
+    const headers = Array.from(htmlTable.querySelectorAll('thead th'));
+    columns.forEach((column, index) => {
+      const header = headers[index + (selectionWidth ? 1 : 0)];
+      if (!header || header.querySelector('.column-resizer')) return;
+      const handle = document.createElement('span');
+      handle.className = 'column-resizer';
+      handle.title = 'Drag to resize; double-click to reset';
+      handle.tabIndex = 0;
+      handle.setAttribute('role', 'separator');
+      handle.setAttribute('aria-orientation', 'vertical');
+      handle.setAttribute('aria-label', `Resize ${column.label ?? column.name}`);
+      handle.style.cssText = 'position:absolute;right:0;top:0;width:8px;height:100%;cursor:col-resize;touch-action:none;z-index:3';
+      handle.addEventListener('click', event => event.stopPropagation());
+      handle.addEventListener('dblclick', event => {
+        event.preventDefault(); event.stopPropagation();
+        manualWidths.delete(column.name); schedule();
+      });
+      handle.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        if (event.key === 'Home') manualWidths.delete(column.name);
+        else manualWidths.set(column.name, Math.max(48, Math.round(header.getBoundingClientRect().width) + (event.key === 'ArrowRight' ? 10 : -10)));
+        schedule();
+      });
+      handle.addEventListener('pointerdown', event => {
+        event.preventDefault(); event.stopPropagation();
+        const start = event.clientX;
+        const width = header.getBoundingClientRect().width;
+        const move = next => {
+          manualWidths.set(column.name, Math.max(48, Math.round(width + next.clientX - start)));
+          schedule();
+        };
+        const stop = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', stop);
+          window.removeEventListener('pointercancel', stop);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', stop);
+        window.addEventListener('pointercancel', stop);
+      });
+      header.appendChild(handle);
+    });
   };
   const schedule = () => {
     if (frame === null) frame = requestAnimationFrame(fit);

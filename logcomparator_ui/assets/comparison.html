@@ -2,14 +2,17 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Compare transactions - diff2html</title>
 <link rel="stylesheet" href="/logcomparator-assets/diff2html.min.css">
-<style>body{margin:16px;font:14px Arial,sans-serif}h1{font-size:20px}nav{position:sticky;top:0;background:white;padding:8px 0;z-index:10;display:flex;gap:12px}button,a{padding:6px 12px;color:#1976d2;border:1px solid #1976d2;background:white;text-decoration:none;cursor:pointer}.d2h-file-side-diff{overflow-x:auto}.d2h-code-line,.d2h-code-side-line{font-family:Consolas,monospace}#error{color:#b00020}</style>
+<style>body{margin:16px;font:14px Arial,sans-serif}h1{font-size:20px}nav{position:sticky;top:0;background:white;padding:8px 0;z-index:10;display:flex;gap:12px}button,a{padding:6px 12px;color:#1976d2;border:1px solid #1976d2;background:white;text-decoration:none;cursor:pointer}.d2h-file-side-diff{overflow-x:auto}.d2h-code-line,.d2h-code-side-line{font-family:Consolas,monospace}#error{color:#b00020}[hidden]{display:none!important}</style>
 </head><body><h1>Compare transactions - diff2html</h1><p id="names"></p>
-<nav id="actions"><button id="previous">Previous difference</button><button id="next">Next difference</button><a id="download" download="comparison.diff">Download diff</a></nav>
-<p id="error" role="alert"></p><div id="diff2html-comparison"></div>
-<script id="comparison-data" type="application/json">__COMPARISON_DATA__</script>
+<nav id="actions" hidden><button id="previous">Previous difference</button><button id="next">Next difference</button><a id="download" download="comparison.diff">Download diff</a></nav>
+<p id="loading" role="status">Preparing comparison...</p><p id="error" role="alert"></p><div id="diff2html-comparison"></div>
 <script src="/logcomparator-assets/diff2html-ui-base.min.js"></script>
 <script>
-const data=JSON.parse(document.getElementById('comparison-data').textContent);
+(async () => {
+try {
+const response=await fetch(__COMPARISON_DATA_URL__,{cache:'no-store'});
+const data=await response.json();
+if (!response.ok) throw new Error(data.error || 'Could not prepare comparison');
 document.getElementById('names').textContent=data.left+' | '+data.right;
 const target=document.getElementById('diff2html-comparison');
 if (!data.diff) {
@@ -19,6 +22,7 @@ if (!data.diff) {
   try {
     const Constructor=window.Diff2HtmlUI.Diff2HtmlUI || window.Diff2HtmlUI;
     new Constructor(target,data.diff,{outputFormat:'side-by-side',drawFileList:false,synchronisedScroll:true,highlight:false,matching:'lines',fileContentToggle:false,stickyFileHeaders:false}).draw();
+    document.getElementById('actions').hidden=false;
     let position=-1;
     function navigate(delta){const lines=target.querySelectorAll('.d2h-del, .d2h-ins');if(!lines.length)return;position=(position+delta+lines.length)%lines.length;lines[position].scrollIntoView({block:'center',behavior:'smooth'});}
     document.getElementById('previous').onclick=()=>navigate(-1);
@@ -28,4 +32,7 @@ if (!data.diff) {
     window.addEventListener('pagehide',()=>URL.revokeObjectURL(url));
   } catch(error){document.getElementById('error').textContent=error.message;}
 }
+} catch(error) { document.getElementById('error').textContent='Could not prepare comparison: '+error.message; }
+finally { document.getElementById('loading').hidden=true; }
+})();
 </script></body></html>

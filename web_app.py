@@ -37,6 +37,8 @@ from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, li
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
 PREVIEW_SOURCES = OrderedDict()
 PREVIEW_DOWNLOADS = OrderedDict()
+PREVIEW_TASKS = OrderedDict()
+PREVIEW_SAVES = OrderedDict()
 COMPARISONS = OrderedDict()
 WEB_OUTPUT = core.DEFAULT_OUTPUT
 register_assets()
@@ -99,6 +101,14 @@ a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;t
     const download = document.getElementById('download');
     download.href = data.download_url;
     download.hidden = false;
+    if (data.save_url) fetch(data.save_url).then(async response => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Copy failed');
+    }).catch(error => {
+      const message = document.getElementById('error');
+      message.textContent = 'Log opened, but saving the output copy failed: ' + error.message;
+      message.hidden = false;
+    });
   } catch (error) {
     const message = document.getElementById('error');
     message.textContent = 'Could not open transaction: ' + error.message;
@@ -112,25 +122,74 @@ a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;t
     return HTMLResponse(document, headers={'Cache-Control': 'no-store'})
 
 
-@app.get('/transaction-data/{source_id}')
-async def transaction_data(source_id: str, uid: str):
-    entry = PREVIEW_SOURCES.get(source_id)
-    if entry is None:
-        return JSONResponse({'error': 'This transaction link has expired. Reload the source in LogComparator.'}, status_code=404)
-    loaded, settings, destination = entry
-    try:
+def preview_task(source_id, uid):
+    loaded, settings, destination = PREVIEW_SOURCES[source_id]
+    settings = dict(settings)
+    key = (source_id, id(loaded), uid, tuple(settings.items()), str(destination))
+    if key in PREVIEW_TASKS:
+        existing = PREVIEW_TASKS[key]
+        if existing.cancelled() or (existing.done() and existing.exception() is not None):
+            PREVIEW_TASKS.pop(key)
+        else:
+            PREVIEW_TASKS.move_to_end(key)
+            return existing
+
+    async def generate():
         output = Path(tempfile.mkdtemp(prefix='preview-', dir=WORKSPACE.name))
-        paths = await run.io_bound(export_logs, loaded, [uid], output, **dict(settings))
-        await run.io_bound(publish_exports, paths, loaded, destination)
+        paths = await run.io_bound(export_logs, loaded, [uid], output, **settings)
         text = await run.io_bound(paths[0].read_text, encoding='utf-8', errors='replace')
         token = uuid.uuid4().hex
         PREVIEW_DOWNLOADS[token] = paths[0]
+
+        async def save():
+            try:
+                await run.io_bound(publish_exports, paths, loaded, destination)
+                return {'saved': True}
+            except Exception as error:
+                return {'error': str(error)}
+
+        PREVIEW_SAVES[token] = {'save': save, 'task': None}
         while len(PREVIEW_DOWNLOADS) > 128:
-            PREVIEW_DOWNLOADS.popitem(last=False)
-        return JSONResponse({'text': text, 'download_url': f'../transaction-download/{token}'},
-                            headers={'Cache-Control': 'no-store'})
+            expired, _ = PREVIEW_DOWNLOADS.popitem(last=False)
+            PREVIEW_SAVES.pop(expired, None)
+        return {'text': text, 'download_url': f'../transaction-download/{token}',
+                'save_url': f'../transaction-save/{token}'}
+
+    task = asyncio.create_task(generate())
+    # Read speculative failures so an un-opened selection never produces an
+    # unhandled-task warning. An actual Open still receives the same exception.
+    task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+    PREVIEW_TASKS[key] = task
+    while len(PREVIEW_TASKS) > 32:
+        PREVIEW_TASKS.popitem(last=False)
+    return task
+
+
+@app.get('/transaction-data/{source_id}')
+async def transaction_data(source_id: str, uid: str):
+    if source_id not in PREVIEW_SOURCES:
+        return JSONResponse({'error': 'This transaction link has expired. Reload the source in LogComparator.'}, status_code=404)
+    try:
+        result = await asyncio.shield(preview_task(source_id, uid))
+        token = result['download_url'].rsplit('/', 1)[-1]
+        entry = PREVIEW_SAVES.get(token)
+        if entry is not None and entry['task'] is None:
+            entry['task'] = asyncio.create_task(entry['save']())
+        return JSONResponse(result, headers={'Cache-Control': 'no-store'})
     except Exception as error:
         return JSONResponse({'error': str(error)}, status_code=400)
+
+
+@app.get('/transaction-save/{token}')
+async def transaction_save(token: str):
+    entry = PREVIEW_SAVES.get(token)
+    if entry is None:
+        return JSONResponse({'error': 'Save status expired.'}, status_code=404)
+    if entry['task'] is None:
+        entry['task'] = asyncio.create_task(entry['save']())
+    result = await asyncio.shield(entry['task'])
+    return JSONResponse(result, status_code=400 if 'error' in result else 200,
+                        headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/transaction-download/{token}')
@@ -143,13 +202,35 @@ def transaction_download(token: str):
 
 @app.get('/comparison/{token}', response_class=HTMLResponse)
 def comparison_page(token: str):
+    if token not in COMPARISONS:
+        return HTMLResponse('This comparison has expired. Compare the transactions again.', status_code=404)
+    document = Path(__file__).with_name('logcomparator_ui').joinpath('assets', 'comparison.html').read_text(encoding='utf-8')
+    return HTMLResponse(document.replace('__COMPARISON_DATA_URL__', json.dumps('/comparison-data/' + token)),
+                        headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/comparison-data/{token}')
+async def comparison_data(token: str):
     entry = COMPARISONS.get(token)
     if entry is None:
-        return HTMLResponse('This comparison has expired. Compare the transactions again.', status_code=404)
-    left, right, diff = entry
-    document = Path(__file__).with_name('logcomparator_ui').joinpath('assets', 'comparison.html').read_text(encoding='utf-8')
-    data = json.dumps({'left': left, 'right': right, 'diff': diff}).replace('<', '\\u003c')
-    return HTMLResponse(document.replace('__COMPARISON_DATA__', data), headers={'Cache-Control': 'no-store'})
+        return JSONResponse({'error': 'This comparison has expired. Compare the transactions again.'}, status_code=404)
+
+    async def generate():
+        output = Path(tempfile.mkdtemp(prefix='compare-', dir=WORKSPACE.name))
+        paths = await run.io_bound(export_logs, entry['source'], entry['uids'], output, **entry['options'])
+        await run.io_bound(publish_exports, paths, entry['source'], entry['destination'])
+        texts = await run.io_bound(lambda: [path.read_text(encoding='utf-8', errors='replace') for path in paths])
+        diff = await run.io_bound(comparison_diff, texts[0], texts[1], paths[0].name, paths[1].name)
+        return dict(left=paths[0].name, right=paths[1].name, diff=diff)
+
+    try:
+        if entry.get('task') is None:
+            entry['task'] = asyncio.create_task(generate())
+        data = await asyncio.shield(entry['task'])
+        return JSONResponse(data, headers={'Cache-Control': 'no-store'})
+    except Exception as error:
+        entry['task'] = None
+        return JSONResponse({'error': str(error)}, status_code=400)
 
 CSS = '''
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
@@ -224,6 +305,7 @@ html, body { height:100%; overflow:hidden; }
 @ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
 def index():
     ui.add_css(CSS)
+    ui.add_head_html('<script src="/logcomparator-assets/open_tabs.js"></script>')
     ui.context.client.content.classes('workspace')
     loaded = None
     source_day = ''
@@ -237,6 +319,7 @@ def index():
     preview_id = None
     font_size = 10
     column_revision = 0
+    comparison_key = comparison_url = None
     previous_offset = 0
     last_source_signature = None
     source_watcher = None
@@ -529,28 +612,59 @@ def index():
                     include_network_to_tango=inbound.value)
 
     def update_actions():
+        nonlocal comparison_key, comparison_url
+        key = (preview_id, id(loaded), tuple(row['transuid'] for row in table.selected), tuple(options().items()), str(session_settings.output)) if len(table.selected) == 2 else None
+        if key != comparison_key:
+            comparison_key = key
+            comparison_url = None
+            if key:
+                token = uuid.uuid4().hex
+                COMPARISONS[token] = dict(source=loaded, uids=list(key[2]), options=options(), destination=session_settings.output)
+                while len(COMPARISONS) > 128:
+                    COMPARISONS.popitem(last=False)
+                comparison_url = f'/comparison/{token}'
+        open_urls = [row['preview_url'] for row in table.selected]
+        open_button.props['data-transaction-opener'] = 'true'
+        open_button.props['data-comparison-url'] = comparison_url or ''
+        for control in (open_button, tools_open):
+            control.props['data-open-urls'] = json.dumps(open_urls)
+            control.set_enabled(bool(open_urls) and not busy)
+            if len(open_urls) == 1:
+                control.props['href'] = open_urls[0]
+                control.props['target'] = '_blank'
+            else:
+                control.props.pop('href', None)
+        for control in (compare_button, tools_compare):
+            if comparison_url:
+                control.props['href'] = comparison_url
+                control.props['target'] = '_blank'
+                control.props['rel'] = 'noopener'
+            else:
+                control.props.pop('href', None)
+            control.set_enabled(bool(comparison_url) and not busy)
         open_button.set_enabled(bool(table.selected) and not busy)
         compare_button.set_enabled(len(table.selected) == 2 and not busy)
         export_button.set_enabled(bool(table.rows) and not busy)
-        if len(table.selected) == 1:
-            open_button.props['href'] = table.selected[0]['preview_url']
-            open_button.props['target'] = '_blank'
-        else:
-            open_button.props.pop('href', None)
+    def warm_selection():
+        if not busy and preview_id in PREVIEW_SOURCES and len(table.selected) == 1:
+            preview_task(preview_id, table.selected[0]['transuid'])
 
-    async def toolbar_open():
-        # One selected log is a real browser link, preserving the click gesture.
+    def toolbar_open():
         update_preview_options()
-        if len(table.selected) > 1:
-            await export_action('open')
+
+    def toolbar_compare():
+        update_actions()
 
     def selection_changed():
         update_actions()
+        warm_selection()
         status.set_text(f'Loaded transactions: {len(loaded.rows) if loaded else 0}; visible: {len(table.rows)}; selected: {len(table.selected)}')
 
     def update_preview_options():
         if preview_id in PREVIEW_SOURCES:
             PREVIEW_SOURCES[preview_id] = (loaded, options(), session_settings.output)
+        update_actions()
+        warm_selection()
 
     async def export_action(mode='download'):
         async def action():
@@ -562,6 +676,10 @@ def index():
             if mode == 'open' and not selection:
                 raise ValueError('Select one or more transactions to open.')
             rows = selection or list(table.rows)
+            if mode == 'compare':
+                update_actions()
+                ui.navigate.to(comparison_url, new_tab=True)
+                return
             if mode == 'open':
                 update_preview_options()
                 for row in rows:
@@ -588,14 +706,6 @@ def index():
                                 bundle.write(path, path.name)
                         return buffer.getvalue()
                     ui.download.content(await run.io_bound(archive), f'LogComparator-{loaded.selected_date}.zip')
-            else:
-                texts = await run.io_bound(lambda: [path.read_text(encoding='utf-8', errors='replace') for path in paths])
-                diff = comparison_diff(texts[0], texts[1], paths[0].name, paths[1].name)
-                token = uuid.uuid4().hex
-                COMPARISONS[token] = (paths[0].name, paths[1].name, diff)
-                while len(COMPARISONS) > 128:
-                    COMPARISONS.popitem(last=False)
-                ui.navigate.to(f'/comparison/{token}', new_tab=True)
             status.set_text(f'Exported {len(paths)} transaction(s). Saved to {saved_to}')
         await perform(action)
 
@@ -938,9 +1048,9 @@ def index():
                         ui.menu_item('Decrease font size', on_click=lambda: zoom(-1))
                     elif label == 'Tools':
                         ui.menu_item('Export options', on_click=export_options_dialog).mark('export-options-menu')
-                        ui.menu_item('Open', on_click=lambda: export_action('open'))
+                        tools_open = ui.menu_item('Open', on_click=toolbar_open)
                         ui.menu_item('Export', on_click=export_action)
-                        ui.menu_item('Compare', on_click=lambda: export_action('compare'))
+                        tools_compare = ui.menu_item('Compare', on_click=toolbar_compare)
                     else:
                         ui.menu_item('README', on_click=lambda: ui.navigate.to('/readme', new_tab=True)).mark('help-readme')
                         ui.menu_item('About', on_click=about)
@@ -964,7 +1074,7 @@ def index():
         selected_date = ui.label('Selected date:  Not selected').classes('text-sm selected-date')
         open_button = ui.button('Open', on_click=toolbar_open).props('outline dense').classes('w-24 toolbar-action')
         export_button = ui.button('Export', on_click=export_action).props('outline dense').classes('w-24 toolbar-action')
-        compare_button = ui.button('Compare', on_click=lambda: export_action('compare')).props('outline dense').classes('w-24 toolbar-action')
+        compare_button = ui.button('Compare', on_click=toolbar_compare).props('outline dense').classes('w-24 toolbar-action')
 
     def datetime_picker(label, default_time):
         async def open_picker():
@@ -1033,16 +1143,55 @@ def index():
 
     ui.context.client.on_connect(install_table_sizing)
 
+    def report_blocked_tabs(event):
+        if (event.args or {}).get('blocked'):
+            ui.notify('Your browser blocked transaction tabs. Allow pop-ups for this site, then click Open again.',
+                      type='warning', timeout=10000, close_button=True)
+
+    for control in (open_button, tools_open):
+        control.on('click', report_blocked_tabs, js_handler="""event => {
+            const urls = JSON.parse(event.currentTarget.getAttribute('data-open-urls') || '[]');
+            if (urls.length > 1) {
+                event.preventDefault();
+                emit({blocked: event.currentTarget.ownerDocument.defaultView.logComparatorOpenTabs(urls)});
+            }
+        }""")
+
+
     table.add_slot('body', '''
         <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @click="props.selected = !props.selected" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
           <q-td auto-width @click.stop><q-checkbox dense size="sm" v-model="props.selected" aria-label="Select transaction" /></q-td>
           <q-td v-for="col in props.cols" :key="col.name" :props="props" :style="col.style" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else>{{ col.value }}</span></q-td>
           <q-menu context-menu touch-position><q-list style="min-width:140px">
-            <q-item v-for="action in ['Open', 'Export', 'Compare']" :key="action" clickable v-close-popup @click="$parent.$emit('context-action', {uid:props.row.transuid, action:action})"><q-item-section>{{ action }}</q-item-section></q-item>
+            <q-item v-for="action in ['Open', 'Export', 'Compare']" :key="action"
+              :tag="action === 'Export' ? 'div' : 'a'"
+              :href="action === 'Open' ? props.row.preview_url : '#'"
+              target="_blank" rel="noopener" clickable v-close-popup
+              @click="event => {
+                const opener = event.currentTarget.ownerDocument.querySelector('[data-transaction-opener]');
+                if (action === 'Open') {
+                  const urls = JSON.parse(opener.getAttribute('data-open-urls') || '[]');
+                  if (props.selected &amp;&amp; urls.length > 1) {
+                    event.preventDefault();
+                    const blocked = event.currentTarget.ownerDocument.defaultView.logComparatorOpenTabs(urls);
+                    if (blocked.length) $parent.$emit('context-action', {uid:props.row.transuid, action:'tabs-blocked'});
+                  }
+                  return;
+                }
+                if (action === 'Compare') {
+                  const url = opener.getAttribute('data-comparison-url');
+                  if (props.selected &amp;&amp; url) { event.currentTarget.href = url; return; }
+                  event.preventDefault();
+                }
+                $parent.$emit('context-action', {uid:props.row.transuid, action:action});
+              }"><q-item-section>{{ action }}</q-item-section></q-item>
           </q-list></q-menu>
         </q-tr>''')
 
     async def context_action(event):
+        if event.args.get('action') == 'tabs-blocked':
+            ui.notify('Your browser blocked transaction tabs. Allow pop-ups for this site, then click Open again.', type='warning', timeout=10000)
+            return
         uid = event.args.get('uid')
         row = next((row for row in table.rows if row['transuid'] == uid), None)
         if row is None:

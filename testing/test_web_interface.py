@@ -24,6 +24,33 @@ def source_fixture(folder):
 
 
 class WebServicesTests(unittest.TestCase):
+    def test_preview_export_has_priority_over_background_parser(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import web_services
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source_fixture(folder)
+            loaded = load_logs(folder, 'AKTIF/BKT', '2026-10-14')
+            locked = threading.Event()
+            observed = threading.Event()
+            def background():
+                with web_services.CORE_LOCK:
+                    locked.set()
+                    if web_services.FOREGROUND_PENDING.wait(3):
+                        observed.set()
+            worker = threading.Thread(target=background)
+            worker.start()
+            self.assertTrue(locked.wait(2))
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(export_logs, loaded, [loaded.rows[0]['transuid']], folder / 'preview').result(timeout=2)
+                self.assertTrue(observed.is_set())
+                self.assertTrue(result[0].is_file())
+                self.assertFalse(web_services.FOREGROUND_PENDING.is_set())
+            finally:
+                worker.join(4)
+
     def test_local_file_listing_includes_each_day_and_compression_without_reading_logs(self):
         from web_services import list_local_source_files
         with tempfile.TemporaryDirectory() as directory:
@@ -515,23 +542,36 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     inputs['TransUID'].set_value('')
                     table.selected = []
                 user.find(ui.table).trigger('selection', {'added': True, 'rows': list(table.rows), 'keys': [row['transuid'] for row in table.rows]})
+                compare = next(iter(user.find(kind=ui.button, content='Compare').elements))
+                comparison_url = compare.props['href']
+                self.assertEqual(compare.props['target'], '_blank')
+                self.assertTrue(all('open_urls' not in row and 'comparison_url' not in row for row in table.rows))
                 with patch.object(user.navigate, 'to') as navigate:
                     user.find(kind=ui.button, content='Compare').click()
-                    await user.should_see('Exported 2 transaction(s).', retries=100)
-                    navigate.assert_called_once()
-                    self.assertTrue(navigate.call_args.kwargs['new_tab'])
-                    comparison_url = navigate.call_args.args[0]
-                comparison = await user.http_client.get(comparison_url)
+                    navigate.assert_not_called()
+                with patch('web_app.export_logs', side_effect=AssertionError('page must open before export')):
+                    comparison = await user.http_client.get(comparison_url)
                 self.assertEqual(comparison.status_code, 200)
+                self.assertIn('Preparing comparison...', comparison.text)
                 self.assertIn('diff2html-comparison', comparison.text)
                 self.assertIn('Download diff', comparison.text)
+                data_url = comparison_url.replace('/comparison/', '/comparison-data/')
+                with patch('web_services.build_problem_columns', side_effect=AssertionError('must not reparse')):
+                    result = await user.http_client.get(data_url)
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(set(result.json()), {'left', 'right', 'diff'})
+                with patch('web_app.export_logs', side_effect=AssertionError('must reuse comparison')):
+                    cached = await user.http_client.get(data_url)
+                self.assertEqual(cached.json(), result.json())
                 assets = await user.http_client.get('/logcomparator-assets/diff2html-ui-base.min.js')
                 self.assertEqual(assets.status_code, 200)
                 with patch.object(user.navigate, 'to') as navigate:
                     user.find(kind=ui.button, content='Open').click()
                     await asyncio.sleep(0.1)
-                    self.assertEqual(navigate.call_count, 2)
-                    self.assertTrue(all(call.kwargs.get('new_tab') for call in navigate.call_args_list))
+                    navigate.assert_not_called()
+                    open_control = next(iter(user.find(kind=ui.button, content='Open').elements))
+                    import json
+                    self.assertEqual(json.loads(open_control.props['data-open-urls']), [row['preview_url'] for row in table.selected])
                 preview = await user.http_client.get(table.rows[0]['preview_url'])
                 self.assertEqual(preview.status_code, 200)
                 self.assertIn('Loading transaction log...', preview.text)
@@ -568,9 +608,15 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 from nicegui import run
                 original_io_bound = run.io_bound
 
+                publish_started = asyncio.Event()
+                release_publish = asyncio.Event()
+
                 async def slow_export(function, *args, **kwargs):
                     if function.__name__ == 'export_logs':
                         await asyncio.sleep(3.2)  # Longer than NiceGUI's page response timeout.
+                    if function.__name__ == 'publish_exports':
+                        publish_started.set()
+                        await release_publish.wait()
                     return await original_io_bound(function, *args, **kwargs)
 
                 from urllib.parse import urljoin
@@ -584,10 +630,18 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn('setInterval', shell.text)
                     self.assertNotIn('location.reload', shell.text)
                     data_url = preview_url.replace('/transaction/', '/transaction-data/', 1)
-                    data = await user.http_client.get(data_url)
+                    data = await asyncio.wait_for(user.http_client.get(data_url), timeout=6)
                     self.assertEqual(data.status_code, 200)
                     snapshot = data.json()
                     self.assertIn('asc<0810>', snapshot['text'])
+                    await asyncio.wait_for(publish_started.wait(), timeout=2)
+                    self.assertFalse(release_publish.is_set())
+                    with patch('web_app.export_logs', side_effect=AssertionError('ready preview must be reused')):
+                        ready = await user.http_client.get(data_url)
+                    self.assertEqual(ready.json(), snapshot)
+                    release_publish.set()
+                    saved = await user.http_client.get(urljoin(preview_url, snapshot['save_url']))
+                    self.assertEqual(saved.status_code, 200)
                     download = await user.http_client.get(urljoin(preview_url, snapshot['download_url']))
                     self.assertEqual(download.status_code, 200)
                     self.assertEqual(download.text.replace('\r\n', '\n'), snapshot['text'])

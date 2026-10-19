@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from contextlib import contextmanager
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,21 @@ READY_ROW_LIMIT = 250_000
 
 class PreparationInterrupted(Exception):
     pass
+
+
+@contextmanager
+def foreground_request():
+    global foreground_requests
+    with READY_LOCK:
+        foreground_requests += 1
+        FOREGROUND_PENDING.set()
+    try:
+        yield
+    finally:
+        with READY_LOCK:
+            foreground_requests -= 1
+            if not foreground_requests:
+                FOREGROUND_PENDING.clear()
 
 
 def _copy_loaded(result):
@@ -278,17 +294,9 @@ def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *
             return None
         finally:
             CORE_LOCK.release()
-    with READY_LOCK:
-        foreground_requests += 1
-        FOREGROUND_PENDING.set()
-    try:
+    with foreground_request():
         return _load_logs(folder, bank, selected_date, progress,
                           audit_folder=audit_folder, cache_folder=cache_folder)
-    finally:
-        with READY_LOCK:
-            foreground_requests -= 1
-            if not foreground_requests:
-                FOREGROUND_PENDING.clear()
 
 
 def prepare_bank_results(folder, banks, selected_date, cancel_event, message=None, *, audit_folder=None):
@@ -424,7 +432,7 @@ def export_logs(loaded: LoadedLogs, uids: list[str], output: Path, **options) ->
     if not set(uids) <= allowed:
         raise ValueError('The selection does not belong to the loaded source.')
     output.mkdir(parents=True, exist_ok=True)
-    with CORE_LOCK:
+    with foreground_request(), CORE_LOCK:
         core.split_audit_files(loaded.audits, output, bank=loaded.bank,
                               transaction_uids=set(uids),
                               tango_log_path=loaded.tango_logs[0] if loaded.tango_logs else None,
