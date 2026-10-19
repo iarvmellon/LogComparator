@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+import html
 import socket
 import webbrowser
 import urllib.request
@@ -15,11 +16,14 @@ import zipfile
 import uuid
 import time
 from collections import OrderedDict
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from string import Template
 
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from nicegui import app, run, ui
+from nicegui.translations import translations
 from logcomparator_ui.diff_view import DiffView, register_assets
 
 import log_core as core
@@ -32,8 +36,14 @@ from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, li
 
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
 PREVIEW_SOURCES = OrderedDict()
+PREVIEW_DOWNLOADS = OrderedDict()
 WEB_OUTPUT = core.DEFAULT_OUTPUT
 register_assets()
+# The reconnect overlay is rendered by NiceGUI outside the page content.
+translations['en-US'].update(
+    connection_lost='Browser <-> LogComparator connection lost.',
+    trying_to_reconnect='Trying to reconnect the browser to LogComparator...',
+)
 
 
 @app.get('/health')
@@ -41,23 +51,75 @@ def health():
     return {'app': 'LogComparator', 'ui': 'web', 'version': core.APP_BUILD_DESCRIBE}
 
 
-@ui.page('/transaction/{source_id}', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
-async def transaction_page(source_id: str, uid: str):
+@app.get('/transaction/{source_id}', response_class=HTMLResponse)
+def transaction_page(source_id: str, uid: str):
+    """A standalone snapshot viewer, independent of NiceGUI's reconnect lifecycle."""
+    title = html.escape(f'LogComparator - {uid}')
+    data_url = '../transaction-data/' + quote(source_id, safe='') + '?' + urlencode({'uid': uid})
+    script_url = json.dumps(data_url).replace('<', '\\u003c')
+    document = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$preview_title</title><style>
+body{font-family:Arial,sans-serif;margin:16px;color:#151515;background:#fff}
+h1{font-size:18px;font-weight:500}pre{font:13px Consolas,monospace;white-space:pre;overflow:auto}
+#loading{display:flex;align-items:center;gap:8px;margin:16px 0}
+.spinner{width:18px;height:18px;border:3px solid #ddd;border-top-color:#1976d2;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}[hidden]{display:none!important}
+a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;text-decoration:none}
+#error{color:#b00020}
+</style></head><body><h1>$preview_title</h1>
+<div id="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading transaction log...</div>
+<p id="error" role="alert" hidden></p><a id="download" hidden>Download log</a><pre id="log"></pre>
+<script>
+(async () => {
+  try {
+    const response = await fetch($preview_data_url, {cache: 'no-store'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load transaction');
+    document.getElementById('log').textContent = data.text;
+    const download = document.getElementById('download');
+    download.href = data.download_url;
+    download.hidden = false;
+  } catch (error) {
+    const message = document.getElementById('error');
+    message.textContent = 'Could not open transaction: ' + error.message;
+    message.hidden = false;
+  } finally {
+    document.getElementById('loading').hidden = true;
+  }
+})();
+</script></body></html>'''
+    document = Template(document).substitute(preview_title=title, preview_data_url=script_url)
+    return HTMLResponse(document, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/transaction-data/{source_id}')
+async def transaction_data(source_id: str, uid: str):
     entry = PREVIEW_SOURCES.get(source_id)
     if entry is None:
-        ui.label('This transaction link has expired. Reload the source in LogComparator.')
-        return
+        return JSONResponse({'error': 'This transaction link has expired. Reload the source in LogComparator.'}, status_code=404)
     loaded, settings, destination = entry
-    ui.label(f'LogComparator - {uid}').classes('text-lg')
     try:
         output = Path(tempfile.mkdtemp(prefix='preview-', dir=WORKSPACE.name))
         paths = await run.io_bound(export_logs, loaded, [uid], output, **dict(settings))
         await run.io_bound(publish_exports, paths, loaded, destination)
         text = await run.io_bound(paths[0].read_text, encoding='utf-8', errors='replace')
-        ui.button('Download log', on_click=lambda: ui.download.file(paths[0]))
-        ui.label(text).style('white-space:pre; font-family:Consolas,monospace; font-size:13px')
+        token = uuid.uuid4().hex
+        PREVIEW_DOWNLOADS[token] = paths[0]
+        while len(PREVIEW_DOWNLOADS) > 128:
+            PREVIEW_DOWNLOADS.popitem(last=False)
+        return JSONResponse({'text': text, 'download_url': f'../transaction-download/{token}'},
+                            headers={'Cache-Control': 'no-store'})
     except Exception as error:
-        ui.label(f'Could not open transaction: {error}')
+        return JSONResponse({'error': str(error)}, status_code=400)
+
+
+@app.get('/transaction-download/{token}')
+def transaction_download(token: str):
+    path = PREVIEW_DOWNLOADS.get(token)
+    if path is None or not path.is_file():
+        return JSONResponse({'error': 'This download has expired. Reopen the transaction.'}, status_code=404)
+    return FileResponse(path, filename=path.name, media_type='text/plain', headers={'Cache-Control': 'no-store'})
 
 CSS = '''
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
@@ -67,15 +129,25 @@ html, body { height:100%; overflow:hidden; }
 .workspace { height:100vh; height:100dvh; max-width:100%; box-sizing:border-box; overflow:hidden; flex-wrap:nowrap; }
 .workspace > * { flex-shrink:0; }
 .workspace > .log-table { flex:1 1 0; min-height:0; overflow:hidden; }
+.workspace-footer { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.8fr) 180px max-content; align-items:center; gap:12px; width:100%; height:28px; min-height:28px; overflow:hidden; white-space:nowrap; }
+.footer-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.footer-progress { width:180px; height:20px; display:flex; align-items:center; }
 .menubar { background:#fafafa; border-bottom:1px solid #c4c4c4; gap:0; width:100%; }
 .menubar .q-btn { min-height:26px; padding:0 10px; font-weight:400; }
 .panel { border:1px solid #aaa; border-radius:0; padding:8px 10px; min-width:0; }
 .panel legend { padding:0 6px; font-size:13px; }
-.toolbar { gap:14px; align-items:center; width:100%; flex-wrap:wrap; }
+.toolbar { gap:8px; align-items:center; width:100%; flex-wrap:nowrap; overflow-x:auto; }
+.toolbar > * { flex-shrink:0; }
+.toolbar .panel { padding:6px; }
+.toolbar .q-radio__label, .toolbar .q-checkbox__label { white-space:nowrap; }
 .data-time-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; width:100%; }
-.data-panel { overflow-x:auto; }
+.data-panel, .time-panel, .filters-panel { overflow-x:auto; }
+.time-controls { display:grid; grid-template-columns:repeat(2,minmax(150px,1fr)) 112px; gap:8px; align-items:center; min-width:440px; width:100%; }
+.time-controls > * { width:100%; min-width:0; }
+.filter-controls { display:grid; grid-template-columns:repeat(11,minmax(70px,1fr)) minmax(160px,1.6fr); gap:8px; min-width:1050px; width:100%; }
 .data-controls { display:grid; grid-template-columns:minmax(110px,1fr) minmax(110px,1fr) 160px max-content minmax(90px,.7fr); gap:8px; align-items:center; min-width:600px; width:100%; }
 .data-controls > * { min-width:0; }
+.data-controls .q-field--auto-height .q-field__control, .data-controls .q-field--auto-height .q-field__native { min-height:32px; }
 .data-controls .status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .q-field--outlined .q-field__control { border-radius:0; background:white; }
 .q-field--dense .q-field__control, .q-field--dense .q-field__marginal { height:32px; }
@@ -90,8 +162,7 @@ html, body { height:100%; overflow:hidden; }
 .log-table .q-table__middle { flex:1 1 0; min-height:0; max-height:none; overflow:auto; }
 .log-table .q-table__bottom { flex-shrink:0; }
 .log-table thead th { position:sticky; top:0; z-index:1; }
-.filter-input { width:120px; flex:1 0 95px; }
-.problem-filter { min-width:260px; flex:2 0 260px; }
+.filter-input, .problem-filter { width:100%; min-width:0; }
 .q-table tr.selected a { color:white; }
 .diff2html-view { max-height:72vh; overflow:auto; width:100%; }
 .diff2html-view .d2h-file-side-diff { overflow-x:auto; }
@@ -156,8 +227,21 @@ def index():
                     pass
         refresh()
 
+    def clear_bank_results():
+        table.props['loading'] = True
+        table.rows = []
+        table.selected = []
+        table.update()
+        update_actions()
+        status.set_text(f'Loading {bank.value}...')
+        if source_day:
+            selected_date.set_text(f'Selected date:  {source_day}  |  {bank.value} (loading)')
+
     def refresh():
         if loaded is None:
+            return
+        if loaded.bank != bank.value:
+            clear_bank_results()
             return
         try:
             try:
@@ -167,6 +251,7 @@ def index():
                 raise ValueError('Use YYYY-MM-DD HH:MM:SS in From and To (24-hour time).') from None
             if minimum and maximum and minimum > maximum:
                 raise ValueError('From must be before To.')
+            table.props['loading'] = False
             table.rows = filter_rows(loaded.rows, {key: control.value or '' for key, control in filters.items()}, minimum, maximum, offset())
             if preview_id:
                 for row in table.rows:
@@ -180,13 +265,12 @@ def index():
             ui.notify(str(error), type='warning')
 
     async def perform(callback, quiet=False):
-        nonlocal busy
+        nonlocal busy, pending_bank
         if busy:
             ui.notify('Wait for the current operation to finish.', type='info')
             return
         async with operation_lock:
             busy = True
-            bank.disable()
             update_actions()
             progress_bar.set_visibility(True)
             try:
@@ -200,21 +284,35 @@ def index():
             finally:
                 poll_progress()
                 busy = False
-                bank.enable()
                 update_actions()
                 progress_bar.set_visibility(False)
+                if pending_bank and loaded is not None:
+                    if bank.value == loaded.bank:
+                        pending_bank = None
+                        refresh()
+                    else:
+                        asyncio.create_task(change_bank())
 
     async def change_bank():
         nonlocal pending_bank
+        if loaded is not None:
+            clear_bank_results()
+        if busy:
+            pending_bank = bank.value
+            background_status.set_text(f'{bank.value} selected; opening after the current operation finishes.')
+            return
         if loaded is not None and bank.value == loaded.bank:
             pending_bank = None
+            refresh()
+            selected_date.set_text(f'Selected date:  {source_day}  |  {loaded.bank}')
             return
-        if busy or loaded is None:
+        if loaded is None:
             return
+        configure_live()
         if bank.value not in core.available_banks_for_folder(loaded.audit_folder or loaded.folder):
             if (background_job and not background_job.done.is_set()) or (source_is_remote and live_enabled.value):
                 pending_bank = bank.value
-                background_status.set_text(f'Waiting for {bank.value} audits to finish downloading...')
+                background_status.set_text(f'Waiting for {bank.value} audits to be read over SSH...')
                 return
             pending_bank = None
             status.set_text(f'No audit files available for {bank.value} on {source_day}.')
@@ -239,8 +337,8 @@ def index():
             return
         live_enabled.enable()
         if live_enabled.value and loaded:
-            source_watcher = (RemoteSourceWatcher(remote_connection, source_day, loaded.folder) if source_is_remote
-                              else SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder, selected_date=source_day))
+            source_watcher = (RemoteSourceWatcher(remote_connection, source_day, loaded.folder, bank=bank.value) if source_is_remote
+                              else SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder, selected_date=source_day, bank=bank.value))
             live_status.set_text('Live — watching source files')
         else:
             live_status.set_text('Live paused' if loaded else 'Load files to start live updates')
@@ -266,7 +364,7 @@ def index():
         last_live_check = time.monotonic()
         await load_source(live=True)
         if source_watcher and source_watcher.error:
-            live_status.set_text(f'SSH connection interrupted; reconnecting: {source_watcher.error}' if source_is_remote
+            live_status.set_text(f'SSH connection (LogComparator <-> {remote_connection.endpoint}) interrupted; reconnecting: {source_watcher.error}' if source_is_remote
                                  else f'Filesystem watcher unavailable; checking every 5 s: {source_watcher.error}')
 
     async def load_source(live=False, remote_import=None, local_import=False):
@@ -291,7 +389,7 @@ def index():
                 core.DEFAULT_CACHE.mkdir(parents=True, exist_ok=True)
                 source = Path(tempfile.mkdtemp(prefix='remote-', dir=core.DEFAULT_CACHE))
                 audit_for_load = source
-                foreground = names if remote_import.all_banks else names_for_bank(names, bank_value)
+                foreground = names_for_bank(names, bank_value)
                 if not foreground:
                     raise ValueError('No audit files available for the selected bank.')
                 await run.io_bound(download_audits, connection, foreground, source, progress)
@@ -321,7 +419,8 @@ def index():
                 remote_connection = None
             if remote_import:
                 folder.set_value(str(source))
-                bank.set_value(bank_value)
+                if pending_bank is None:
+                    bank.set_value(bank_value)
             audit_source_folder = result.audit_folder
             audit_path.set_value(str(result.audit_folder))
             if not live:
@@ -347,11 +446,14 @@ def index():
                 configure_live()
             if remote_import:
                 remaining = [name for name in names if name not in foreground]
-                if source_day != core.current_log_date() and remaining:
-                    background_job = RemoteAuditJob(connection, remaining, result.folder)
-                    background_status.set_text('Reading historical audits for other banks once in the background.')
+                other_banks = [b for b in banks_for_audits(names) if b != bank_value]
+                if remaining or other_banks:
+                    background_job = RemoteAuditJob(connection, remaining, result.folder,
+                                                    prepare_banks=other_banks,
+                                                    selected_date=source_day)
+                    background_status.set_text('Reading and preparing other banks for the selected date in the background.')
                 else:
-                    background_status.set_text('SSH live update reads files for today for all banks.' if live_enabled.value else 'Historical files loaded; live update is off.')
+                    background_status.set_text('SSH live update reads only the selected bank for today.' if live_enabled.value else 'Historical files loaded; live update is off.')
         await perform(action, quiet=live)
 
     def options():
@@ -572,7 +674,6 @@ def index():
         names = []
         log_names = []
         trusted_fingerprint = ''
-        pending_key = None
         listing = False
         with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
             ui.label('Import remote logs (UAT)').classes('text-lg')
@@ -583,30 +684,39 @@ def index():
 
             def update_banks():
                 available = banks_for_audits([name for name in names if audit_date(name) == calendar.value])
-                remote_bank.set_options(['All', *available] if available else [])
+                remote_bank.set_options(available)
                 remote_bank.set_value(bank.value if bank.value in available else (available[0] if available else None))
                 import_button.set_enabled(bool(available) and listed_connection is not None)
 
             async def inspect_remote():
-                nonlocal listed_connection, names, log_names, pending_key, listing
+                nonlocal listed_connection, names, log_names, listing, trusted_fingerprint
                 if listing or dialog.is_deleted:
                     return
                 listing = True
                 listed_connection = None
-                pending_key = None
                 names = []
                 log_names = []
                 import_button.disable()
                 calendar.disable()
                 remote_bank.set_options([])
                 retry_button.set_visibility(False)
-                trust_button.set_visibility(False)
                 try:
-                    for attempt in range(1, 4):
+                    attempt = 1
+                    while attempt <= 3:
                         message.set_text(f'Connecting and listing remote audit files... Attempt {attempt}/3')
                         try:
                             candidate = connection()
-                            names, log_names = await run.io_bound(list_remote_sources, candidate)
+                            try:
+                                names, log_names = await run.io_bound(list_remote_sources, candidate)
+                            except UnknownHostKey as error:
+                                if dialog.is_deleted:
+                                    return
+                                if candidate.fingerprint:
+                                    raise ValueError('Remote host key changed; connection refused.') from error
+                                trusted_fingerprint = error.fingerprint
+                                attempt = 1
+                                candidate = connection()
+                                names, log_names = await run.io_bound(list_remote_sources, candidate)
                             if dialog.is_deleted:
                                 return
                             listed_connection = candidate
@@ -619,19 +729,13 @@ def index():
                             update_banks()
                             message.set_text(f'{len(names)} audit files; {len(log_names)} Tango logs; {len(days)} dates available.' if days else 'No dated source files found.')
                             return
-                        except UnknownHostKey as error:
-                            if dialog.is_deleted:
-                                return
-                            pending_key = (candidate, error.fingerprint)
-                            message.set_text(f'First connection to {candidate.endpoint}. Verify this fingerprint with the remote host administrator:\n{error.fingerprint}')
-                            trust_button.set_visibility(True)
-                            return
                         except Exception as error:
                             if dialog.is_deleted:
                                 return
                             if attempt < 3 and is_transient_ssh_error(error):
                                 message.set_text(f'Temporary SSH connection problem: {error}. Retrying automatically ({attempt + 1}/3)...')
                                 await asyncio.sleep(attempt)
+                                attempt += 1
                                 if dialog.is_deleted:
                                     return
                                 continue
@@ -640,14 +744,6 @@ def index():
                             return
                 finally:
                     listing = False
-
-            async def trust_host():
-                nonlocal trusted_fingerprint
-                if pending_key is None or connection() != pending_key[0]:
-                    message.set_text('Reconnect to verify the configured UAT host.')
-                    return
-                trusted_fingerprint = pending_key[1]
-                await inspect_remote()
 
             async def import_remote():
                 if busy:
@@ -661,11 +757,13 @@ def index():
                     message.set_text('Select an available date and bank.')
                     return
                 available = banks_for_audits(selected_names)
-                all_banks = remote_bank.value == 'All'
-                selected_bank = (bank.value if bank.value in available else available[0]) if all_banks else remote_bank.value
+                selected_bank = remote_bank.value
+                if selected_bank not in available:
+                    message.set_text('Select an available bank/acquirer.')
+                    return
                 request = RemoteImportRequest(listed_connection, selected_names,
                                               [name for name in log_names if core.parse_log_date(name) == calendar.value],
-                                              calendar.value, selected_bank, all_banks)
+                                              calendar.value, selected_bank)
                 clear_filters()
                 dialog.close()
                 dialog.delete()
@@ -673,15 +771,13 @@ def index():
 
             retry_button = ui.button('Retry listing', on_click=inspect_remote).props('outline')
             retry_button.set_visibility(False)
-            trust_button = ui.button('Trust this host fingerprint and connect', on_click=trust_host).props('outline')
-            trust_button.set_visibility(False)
             calendar = ui.date(on_change=update_banks).mark('remote-import-calendar')
             calendar.props['options'] = []
             calendar.props['events'] = []
             calendar.props['event-color'] = 'green'
             calendar.disable()
             remote_bank = ui.select([], label='Remote Bank/Acquirer').props('outlined dense').classes('w-full')
-            ui.label('SSH reads live logs. New data and files for the selected date are read automatically.').classes('text-sm')
+            ui.label('The selected bank loads first; other banks for the same date load once in the background. Live updates apply only to today and the selected bank.').classes('text-sm')
             with ui.row():
                 import_button = ui.button('Read remote logs', on_click=import_remote)
                 import_button.disable()
@@ -839,12 +935,12 @@ def index():
             live_status = ui.label().classes('status').mark('live-status')
             with live_status:
                 ui.tooltip().bind_text_from(live_status, 'text')
-        with panel('Time range'), ui.row().classes('items-center gap-2'):
+        with panel('Time range').classes('time-panel'), ui.element('div').classes('time-controls'):
             from_datetime = datetime_picker('From', '00:00:00')
             to_datetime = datetime_picker('To', '23:59:59')
             timezone = ui.select([f'UTC{i:+d}' if i else 'UTC' for i in range(-3, 4)], value='UTC', label='Timezone', on_change=change_timezone).props('outlined dense').classes('w-28')
 
-    with panel('Filters').classes('w-full'), ui.row().classes('w-full gap-3'):
+    with panel('Filters').classes('w-full filters-panel'), ui.element('div').classes('filter-controls'):
         for key, label in COLUMNS:
             if key in ('datetime', 'possibleproblem'):
                 continue
@@ -875,18 +971,29 @@ def index():
             table.update()
         await export_action({'Open': 'open', 'Export': 'download', 'Compare': 'compare'}.get(event.args.get('action'), 'open'))
     table.on('context-action', context_action)
-    with ui.row().classes('w-full items-center justify-between'):
-        status = ui.label('Use File > Import local logs or Import remote logs (UAT) to load logs.').classes('status')
-        ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} · Web').classes('status text-gray-600')
-    progress_bar = ui.linear_progress(value=0).classes('w-full')
-    background_status = ui.label().classes('status')
+    with ui.element('footer').classes('workspace-footer'):
+        status = ui.label('Use File > Import local logs or Import remote logs (UAT) to load logs.').classes('status footer-text')
+        with status:
+            ui.tooltip().bind_text_from(status, 'text')
+        background_status = ui.label().classes('status footer-text')
+        with background_status:
+            ui.tooltip().bind_text_from(background_status, 'text')
+        # Keep the slot allocated even while the progress indicator is hidden.
+        with ui.element('div').classes('footer-progress'):
+            progress_bar = ui.linear_progress(value=0, size='8px', show_value=False).classes('w-full')
+        ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} - Web').classes('status text-gray-600')
     for control in (protocol, byte_data, internal, outbound, inbound):
         control.on_value_change(update_preview_options)
     progress_bar.set_visibility(False)
     update_actions()
     ui.timer(0.2, poll_progress)
     ui.timer(0.25, live_tick)
-    ui.context.client.on_delete(stop_watching)
+    def stop_session_workers():
+        stop_watching()
+        if background_job:
+            background_job.cancel_event.set()
+
+    ui.context.client.on_delete(stop_session_workers)
     # Browser Ctrl +/- zooms the entire interface using the browser's native control.
 
 

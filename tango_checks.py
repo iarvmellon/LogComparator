@@ -1,6 +1,7 @@
 """Stream explicit Tango diagnostics; associate only exact transaction IDs."""
 from __future__ import annotations
 
+import source_memory
 import gzip
 import re
 from pathlib import Path
@@ -61,7 +62,7 @@ def scan_tango_diagnostics(paths: list[Path], transaction_uids: set[str], progre
         if key not in sources or path.suffix.lower() != '.gz':
             sources[key] = path
     for path in sources.values():
-        opener = gzip.open if path.suffix.lower() == '.gz' else open
+        opener = gzip.open if path.suffix.lower() == '.gz' else source_memory.open_source
         if progress:
             progress(85, 'Check Tango diagnostics: ' + path.name)
         with opener(path, 'rt', encoding='utf-8', errors='replace') as handle:

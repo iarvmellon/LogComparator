@@ -1,4 +1,6 @@
 ﻿from __future__ import annotations
+import source_memory
+import contextlib
 
 import argparse
 import gzip
@@ -456,6 +458,7 @@ def parse_block(text: str, index: int) -> BlockMeta:
         + audit_values.get("originmti", [])
         + audit_values.get("tgoriginmti", [])
     )
+    mti_values = unique_nonempty({'800': '0800', '810': '0810'}.get(value, value) for value in mti_values)
     rrn_values = unique_nonempty(
         fields.get("retrievrefnumber", [])
         + fields.get("retrievalreferencenumber", [])
@@ -704,6 +707,7 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
         + audit_values.get("originmti", [])
         + audit_values.get("tgoriginmti", [])
     )
+    mti_values = unique_nonempty({'800': '0800', '810': '0810'}.get(value, value) for value in mti_values)
     rrn_values = unique_nonempty(
         fields.get("retrievrefnumber", [])
         + fields.get("retrievalreferencenumber", [])
@@ -1109,10 +1113,11 @@ def iter_marker_block_locations_from_file(
     """Yield byte ranges and text for transaction blocks in a large audit."""
     separator = SEPARATOR_PREFIX.encode("ascii")
     markers = (b"transUId", b"transUid", b"networkManageCode")
-    with path.open("rb") as handle:
-        if path.stat().st_size == 0:
+    with source_memory.open_source(path) as handle:
+        if source_memory.stat(path).st_size == 0:
             return
-        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+        with (contextlib.nullcontext(handle.getvalue()) if isinstance(handle, io.BytesIO)
+              else mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)) as mapped:
             start = 0
             size = len(mapped)
             while start < size:
@@ -1134,10 +1139,11 @@ def iter_target_blocks_from_file(
     """Find selected transactions without reading a multi-GB audit into RAM."""
     separator = SEPARATOR_PREFIX.encode("ascii")
     uid_bytes = [uid.encode("utf-8") for uid in target_uids if uid]
-    if not uid_bytes or path.stat().st_size == 0:
+    if not uid_bytes or source_memory.stat(path).st_size == 0:
         return
-    with path.open("rb") as handle:
-        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+    with source_memory.open_source(path) as handle:
+        with (contextlib.nullcontext(handle.getvalue()) if isinstance(handle, io.BytesIO)
+              else mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)) as mapped:
             ranges: set[tuple[int, int]] = set()
             for uid in uid_bytes:
                 position = 0
@@ -1158,7 +1164,7 @@ def iter_target_blocks_from_file(
 
 
 def file_text_cache_key(path: Path) -> tuple[str, int, int]:
-    stat = path.stat()
+    stat = source_memory.stat(path)
     return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
 
 
@@ -1179,7 +1185,8 @@ def read_text_cached(path: Path) -> str:
     for stale_key in stale_keys:
         del FILE_TEXT_CACHE[stale_key]
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+    with source_memory.open_source(path, "r") as handle:
+        text = handle.read()
     FILE_TEXT_CACHE[key] = text
     return text
 
@@ -1196,7 +1203,7 @@ def cached_target_blocks(
         located_blocks: list[tuple[int, str]] = []
         for uid in target_uids:
             for index, path_text, start, end in locations_by_uid.get(uid, []):
-                with Path(path_text).open("rb") as handle:
+                with source_memory.open_source(Path(path_text)) as handle:
                     handle.seek(start)
                     block_text = handle.read(end - start).decode(
                         "utf-8", errors="replace"
@@ -1222,7 +1229,7 @@ def iter_input_blocks(
     target_uids: set[str] | None = None,
 ) -> Iterator[tuple[int, str]]:
     index = 0
-    total_bytes = sum(path.stat().st_size for path in input_paths)
+    total_bytes = sum(source_memory.stat(path).st_size for path in input_paths)
     processed_bytes = 0
     last_reported_bytes = 0
     has_audit_logons = any(uid.startswith("LOGON-") for uid in target_uids or ())
@@ -1245,12 +1252,12 @@ def iter_input_blocks(
             for block_text in iter_target_blocks_from_file(input_path, target_uids):
                 yield index, block_text
                 index += 1
-            processed_bytes += input_path.stat().st_size
+            processed_bytes += source_memory.stat(input_path).st_size
             report(input_path, force=True)
             continue
         if load_into_memory:
             text = read_text_cached(input_path)
-            processed_bytes += input_path.stat().st_size
+            processed_bytes += source_memory.stat(input_path).st_size
             report(input_path, force=True)
             if target_pattern is not None:
                 block_iterable = iter_target_blocks_from_text(text, target_pattern)
@@ -1263,7 +1270,7 @@ def iter_input_blocks(
 
         lines: list[str] = []
         pending_separator: str | None = None
-        with input_path.open("rb") as handle:
+        with source_memory.open_source(input_path) as handle:
             for raw_line in handle:
                 processed_bytes += len(raw_line)
                 line = raw_line.decode("utf-8", errors="replace")
@@ -1370,11 +1377,13 @@ def scan_transactions_for_list(
     transactions: dict[str, Transaction] = {}
     locations_by_uid: dict[str, list[tuple[int, str, int, int]]] = defaultdict(list)
     index = 0
-    total_bytes = sum(path.stat().st_size for path in input_paths)
+    total_bytes = sum(source_memory.stat(path).st_size for path in input_paths)
     processed_bytes = 0
     for input_path in input_paths:
-        file_size = input_path.stat().st_size
+        file_size = source_memory.stat(input_path).st_size
         for start, end, block_text in iter_marker_block_locations_from_file(input_path):
+            if progress_callback and index % 4096 == 0:
+                progress_callback(processed_bytes + start, total_bytes, f"Load transactions: {input_path.name}")
             block = parse_block_for_list(block_text, index)
             if not block.trans_uid:
                 index += 1
@@ -1406,11 +1415,11 @@ def collect_tango_lines(
     transaction_uids: set[str],
 ) -> dict[str, list[str]]:
     lines_by_uid: dict[str, list[str]] = defaultdict(list)
-    if not tango_log_path or not tango_log_path.is_file() or not transaction_uids:
+    if not tango_log_path or not source_memory.is_file(tango_log_path) or not transaction_uids:
         return lines_by_uid
 
     uid_bytes = {uid: uid.encode("utf-8") for uid in transaction_uids if uid}
-    with tango_log_path.open("rb") as handle:
+    with source_memory.open_source(tango_log_path) as handle:
         for raw_line in handle:
             for uid, encoded_uid in uid_bytes.items():
                 if encoded_uid in raw_line:
@@ -1933,7 +1942,7 @@ def download_remote_file(
     settings = ACTIVE_RUNTIME_SETTINGS.get()
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / Path(remote_path).name
-    if local_path.is_file() and not overwrite:
+    if source_memory.is_file(local_path) and not overwrite:
         return local_path
     if overwrite:
         local_path.unlink(missing_ok=True)
@@ -1975,7 +1984,7 @@ def decompress_file(path: Path, *, overwrite: bool = False) -> Path:
     if not is_gzip_file(path):
         return path
     output_path = path.with_suffix("")
-    if output_path.is_file() and not overwrite:
+    if source_memory.is_file(output_path) and not overwrite:
         return output_path
     if overwrite:
         output_path.unlink(missing_ok=True)
@@ -1984,7 +1993,7 @@ def decompress_file(path: Path, *, overwrite: bool = False) -> Path:
             for line in source:
                 destination.write(line)
     except (EOFError, gzip.BadGzipFile) as exc:
-        if output_path.is_file() and output_path.stat().st_size > 0:
+        if source_memory.is_file(output_path) and source_memory.stat(output_path).st_size > 0:
             return output_path
         output_path.unlink(missing_ok=True)
         raise ValueError(
@@ -2002,8 +2011,8 @@ def extract_gzip_files_in_folder(
         raise ValueError(f"Local source folder was not found: {folder}")
     gzip_paths = sorted(
         path
-        for path in folder.iterdir()
-        if path.is_file() and is_gzip_file(path)
+        for path in source_memory.list_paths(folder)
+        if source_memory.is_file(path) and is_gzip_file(path)
     )
     extracted: list[Path] = []
     total = len(gzip_paths)
@@ -2021,9 +2030,9 @@ def cache_local_file(source_path: Path, local_dir: Path) -> Path:
     local_path = local_dir / source_path.name
     if local_path.resolve() == source_path.resolve():
         return local_path
-    if local_path.is_file():
-        source_stat = source_path.stat()
-        local_stat = local_path.stat()
+    if source_memory.is_file(local_path):
+        source_stat = source_memory.stat(source_path)
+        local_stat = source_memory.stat(local_path)
         if (
             source_stat.st_size == local_stat.st_size
             and source_stat.st_mtime_ns == local_stat.st_mtime_ns
@@ -2093,8 +2102,8 @@ def list_local_logs(folder: Path) -> list[str]:
         raise ValueError(f"Local source folder was not found: {folder}")
     paths = [
         path
-        for path in folder.iterdir()
-        if path.is_file() and parse_log_date(path.name)
+        for path in source_memory.list_paths(folder)
+        if source_memory.is_file(path) and not path.name.lower().endswith((".tar.gz", ".tgz")) and parse_log_date(path.name)
     ]
     return [str(path) for path in unique_source_files(paths)]
 
@@ -2103,8 +2112,8 @@ def available_banks_for_folder(folder: Path) -> list[str]:
     if not folder.is_dir():
         return []
     banks: list[str] = []
-    for path in folder.iterdir():
-        if not path.is_file():
+    for path in source_memory.list_paths(folder):
+        if not source_memory.is_file(path):
             continue
         name = source_file_key(path)
         if not name.startswith("audit."):
@@ -2126,7 +2135,7 @@ def available_banks_for_folder(folder: Path) -> list[str]:
 def validate_local_log_folder(folder: Path) -> None:
     if not folder.is_dir():
         raise ValueError(f"Local source folder was not found: {folder}")
-    files = [source_file_key(path) for path in folder.iterdir() if path.is_file()]
+    files = [source_file_key(path) for path in source_memory.list_paths(folder) if source_memory.is_file(path)]
     log_dates = sorted({date for name in files if (date := parse_log_date(name))})
     selected_date = log_dates[0] if len(log_dates) == 1 else None
     has_tango = bool(log_dates)
@@ -2185,8 +2194,9 @@ def list_local_audits(folder: Path, selected_date: str, bank: str) -> list[Path]
     compact_date = selected_date.replace("-", "")
     paths = [
         path
-        for path in folder.iterdir()
-        if path.is_file()
+        for path in source_memory.list_paths(folder)
+        if source_memory.is_file(path)
+        and not path.name.lower().endswith((".tar.gz", ".tgz"))
         and (
             path_matches_ptms_audit(path, selected_date)
             or (

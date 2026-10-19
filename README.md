@@ -5,11 +5,59 @@ PTMS/SPDH and OPN/ISO audit streams. **The NiceGUI / Quasar web interface is now
 the only UI.** The former Tkinter window and its calendar/layout code have been
 removed. Parsing, transaction checks, CLI analysis and export formats are retained.
 
+The top toolbar keeps **Compare** on the first row with **Open** and **Export**.
+**Time range** keeps From, To and Timezone on one row, and **Filters** keeps
+all fields, including Possible problem, on one row. These rows scroll
+horizontally when the window is too narrow.
 The **Data** and **Time range** panels share one row. All **Data** controls use
-a compact single row; narrow screens can scroll horizontally inside Data.
+a compact single row; Bank/Acquirer has the same 32px field height as Log folder
+and Audit folder. Narrow screens can scroll horizontally inside Data.
 Hover over its shortened live status to read the full message. The workspace
 fills the browser viewport; the table uses the remaining height and provides
 the only vertical scrollbar, with its header and pagination kept visible.
+Progress is shown only in the last footer row. Its space stays reserved while
+idle, so progress and status changes never resize the transaction list.
+
+For today's remote sources, `.tar.gz`/`.tgz` archives and `.gz`/`.gzip` files
+are streamed over SSH/SFTP and decompressed in RAM without local source files.
+For all earlier dates, compressed and uncompressed sources are downloaded to the
+local import cache; archives are retained and extracted locally. Historical
+sources have no live updates. Open, Compare and export use the resulting snapshots.
+Uncompressed sources for today retain their incremental local mirror.
+
+Connection messages identify the affected link: **Browser <-> LogComparator** in
+the reconnect overlay, or **SSH (LogComparator <-> remote host:port)** in the live
+status. The browser reconnect overlay does not indicate an SSH disconnection.
+
+Ready transaction lists and diagnostics are cached per Bank/Acquirer, date and
+source folder, with a total budget of 250,000 cached rows (one large result may
+exceed this budget). Returning to an unchanged bank reuses the
+ready results. Changes to its audit files or shared Tango/PTMS sources invalidate
+the cached results. Remote imports also prepare other banks in the background
+after reading their files. Ready banks can open while another bank is being
+prepared; foreground loads take priority at background analysis checkpoints.
+Banks that have not finished preparation still require analysis.
+
+The Bank/Acquirer selector stays available while progress is shown. If an
+operation is in progress, the latest selected bank opens when that operation
+finishes. Changing Bank/Acquirer immediately clears the transaction table and its
+selection; it stays empty with an animated loading bar until results for the
+selected bank are ready. The loading bar does not show an estimated percentage.
+
+Transaction preview tabs are standalone snapshot pages. They open immediately
+with a loading indicator and fetch the log once over HTTP, independently of the
+main workspace live updates and WebSocket reconnects. There is no automatic
+preview refresh or polling; the displayed log stays fixed until you reload or
+reopen it. Slow exports can exceed three seconds without a page timeout.
+The indicator is replaced by the log and Download link, or an error message.
+
+A LOGON with an ISO 0800 TANGO-to-NETWORK request and an ISO 0810
+NETWORK-to-TANGO response from the same process is green, including audits that
+omit the response code. Three-digit 800/810 MTIs are normalized to 0800/0810.
+A standalone inbound LOGON 0800 NETWORK-to-TANGO is also green without requiring
+an 0810 response. A standalone outbound 0800 still requires its 0810 reply.
+An explicit non-approved response code does not qualify; existing diagnostic
+errors and warnings retain their row-color priority.
 
 ## Start the application
 
@@ -74,20 +122,21 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   The remote folders are `/opt/tango/MLNPSP01/log` and
   `/opt/tango/MLNPSP01/audit`, matching the local Linux source layout.
   The historical stored sudo password is used as the SSH password fallback;
-  existing SSH agent/default keys are also tried. On the first connection in
-  this dialog, verify the
-  displayed SHA256 host fingerprint and choose **Trust this host fingerprint
-  and connect**. That fingerprint is pinned for subsequent listing/download
-  connections in the dialog; a changed key is rejected. Choose an available
-  date directly in the calendar (green dots identify available dates), and **Remote Bank/Acquirer**, then **Read remote logs**. **All**
-  downloads all available banks before displaying one bank.
+  existing SSH agent/default keys are also tried. SHA256 host fingerprints are
+  accepted automatically whenever a new remote connection workflow requires
+  acceptance, including when reopening the dialog. No confirmation button is shown. Subsequent reads in that workflow
+  reuse the accepted fingerprint; a changed key within the workflow is rejected. Choose an available
+  date directly in the calendar (green dots identify available dates), and **Remote Bank/Acquirer**, then **Read remote logs**. Only the selected bank is loaded and displayed first;
+  there is no foreground All option.
   The requested bank's OPN and shared PTMS audits load first; other banks download
   in the background and become available through the bank combobox.
   If a date contains PTMS/SPDH audits only, the bank selector offers the configured
   banks and the parser applies transaction-level bank filtering after download.
   Files are read over SSH/SFTP into a private folder under the writable source
-  cache, with atomic publication of bounded file snapshots. Date discovery uses log and
-  audit filenames; the selected date's Tango logs are downloaded too, so the
+  cache for uncompressed sources, with atomic publication of bounded file snapshots.
+  Today's compressed sources are streamed and extracted in RAM; historical sources
+  are downloaded and extracted locally. Date discovery uses log and
+  audit filenames; the selected date's Tango logs are read too, so the
   same Tango diagnostics can run as with a local import.
   The password stays in the server-side UAT configuration; there is no password
   input, prefilled password value or credential override in the web dialog.
@@ -102,20 +151,21 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   connection checks today's log/audit files approximately every
   500 ms (plus network, file-reading and parsing time). Only appended bytes are
   read after the initial snapshot, with small prefix checks to detect rotation
-  or truncation. New files for all banks are discovered automatically, only for today. Replaced
+  or truncation. Only the selected Bank/Acquirer is monitored live, including its new audit files
+  and shared PTMS/Tango sources. Changing Bank/Acquirer switches monitoring; other
+  banks receive one background snapshot and are not continuously refreshed. Replaced
   or truncated files are read again; rotated files remain in the local history.
   Interrupted reads retain the last complete cache. Lost connections reconnect
-  automatically using the confirmed host fingerprint; a changed key is rejected.
+  automatically using the automatically accepted host fingerprint; a changed key is rejected.
   Disable **Live update** to pause remote reads, or enable it to resume.
   Today means the date on the computer/container running LogComparator,
   independent of the display timezone. At midnight the old live session stops;
-  import the new date explicitly. Historical files for other banks are read
+  import the new date explicitly. Other banks for the imported date, including today, are read
   once in the background, without continuous remote polling.
-- The requested bank is displayed first. While remote live update is enabled,
-  the SSH reader also loads other banks for the same date into the cache.
+- The requested bank is displayed first. A separate background worker
+  loads other banks for the same date once, independently of the Live update checkbox.
   Bank/Acquirer switches reuse these files. A bank selected before its files
-  arrive loads when they become available. Selecting **All** reads all currently
-  available banks before showing one. Importing another source, closing the
+  arrive loads when they become available. Importing another source, closing the
   workspace or deleting its browser session stops the old SSH reader.
 - **From / To** each combine date and time. Click the field or calendar icon to
   choose a date and a 24-hour clock time, including seconds, then Apply. Cancel
@@ -374,7 +424,7 @@ and restarting an existing image does not change its version metadata.
 | --- | --- |
 | Native window and date dialogs | Browser page and Quasar calendar/time pickers |
 | Native folder chooser | File > Import local logs > Browse folders |
-| SSH date/bank selection, including All | File > Import remote logs (UAT) |
+| SSH date and selected-bank import | File > Import remote logs (UAT) |
 | Background download for other banks | Background worker and bank combobox |
 | Table filters, columns, sorting, selection, colors | Quasar QTable and filter bar |
 | Open in Notepad++ / double-click | Specific transaction in a new browser tab |
@@ -648,12 +698,25 @@ For the same single-command build workflow as the dissector, run
 `./build_executable.ps1`; it refreshes metadata without publishing a tag and
 builds with the project virtual environment.
 
-After every change, rebuild the executable from the project root with:
+After every change, rebuild from the project root with:
 
 ```powershell
-.\.venv\Scripts\python.exe update_build_info.py
-.\.venv\Scripts\pyinstaller.exe --onefile --noconsole --name LogComparator --add-data "build_info.json;." main.py
+.\build_executable.ps1
 ```
+
+The builder stages the new windowless executable in
+`build/executable-stage/LogComparator.exe` while the existing app can continue
+running. Only after PyInstaller succeeds, `publish_executable.ps1` stops processes
+whose executable path exactly matches this project's `dist/LogComparator.exe`,
+waits for them to exit and atomically publishes the new file. Other copies are
+left running. File-lock errors are retried briefly. Failed builds leave the old
+executable in place. Reopen the Desktop shortcut after a successful build.
+
+If a release build failed with `WinError 5` after its tag was already published,
+run the command above, or `.\.venv\Scripts\python.exe create_release.py --build-only`.
+This retries the local build without creating or pushing a release tag. Administrator
+rights are normally unnecessary; the release tag does not need to be removed.
+Direct PyInstaller builds into `dist/` require closing the running application first.
 
 The latest executable must always be stored inside the project at
 `dist\LogComparator.exe`. Generated files under `dist/` are ignored and are

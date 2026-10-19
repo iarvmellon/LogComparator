@@ -39,7 +39,14 @@ class WebServicesTests(unittest.TestCase):
                         break
                 self.assertTrue(watcher.changed.is_set())
                 self.assertIsNone(watcher.error)
-                watcher.changed.clear()
+                # Drain coalesced events from the current-day writes before
+                # checking that unrelated historical writes are ignored.
+                for _ in range(10):
+                    watcher.changed.clear()
+                    if not watcher.changed.wait(0.35):
+                        break
+                else:
+                    self.fail('Filesystem watcher never became quiet')
                 (folder / 'tango.log.2026-10-13').write_text('old data')
                 (folder / 'audit.OPNBISOBKT01.20261013').write_text('old audit')
                 self.assertFalse(watcher.changed.wait(0.5))
@@ -120,6 +127,8 @@ class WebServicesTests(unittest.TestCase):
                                        (('warning: timeout', 'error: bad field'), 'problem')]:
                 problems = {row['transuid']: findings for row in original.rows}
                 with patch('web_services.build_problem_columns', return_value=problems):
+                    from web_services import LOADED_CACHE
+                    LOADED_CACHE.clear()  # Each case supplies a different diagnostics implementation.
                     loaded = load_logs(folder, 'AKTIF/BKT')
                 for row in loaded.rows:
                     self.assertEqual(row['severity'], expected)
@@ -243,10 +252,9 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     for label in ('Remote host (IP:port)', 'Remote username', 'Remote password'):
                         self.assertNotIn(label, remote_inputs)
                     self.assertFalse(any(e.text == 'Connect and list logs' for e in user.find(ui.button).elements))
-                    await user.should_see('SHA256:test-host', retries=100)
-                    user.find('Trust this host fingerprint and connect').click()
                     await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
                     self.assertEqual(listing.call_count, 5)
+                    self.assertFalse(any('Trust this host fingerprint' in e.text for e in user.find(ui.button).elements))
                     self.assertEqual(listing.call_args.args[0].fingerprint, 'SHA256:test-host')
                     self.assertEqual(listing.call_args.args[0].audit_folder, '/opt/tango/MLNPSP01/audit')
                     self.assertEqual(listing.call_args.args[0].log_folder, '/opt/tango/MLNPSP01/log')
@@ -255,7 +263,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(calendar.props['options'], calendar.props['events'])
                     remote_bank = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Remote Bank/Acquirer')
                     with user:
-                        remote_bank.set_value('All')
+                        remote_bank.set_value('AKTIF/BKT')
                     user.find('Read remote logs').click()
                     await user.should_see('Loaded transactions: 2', retries=100)
                     transfer.assert_called_once()
@@ -265,7 +273,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     live_control = next(iter(user.find(marker='live-update').elements))
                     self.assertTrue(live_control.enabled)
                     self.assertTrue(live_control.value)
-                    await user.should_see('SSH live update reads files for today')
+                    await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKT')
                     with user:
                         await live_timer.callback()
                     self.assertEqual(len(table.rows), 2)
@@ -282,9 +290,40 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len(table.selected), 1)
                     self.assertEqual(inputs['From'].value, '2026-10-14 06:00:00')
                     self.assertEqual(inputs['TransactionType'].value, 'LOGON')
+                    import inspect
+                    load_callback = inspect.getclosurevars(live_timer.callback).nonlocals['load_source']
+                    perform_callback = inspect.getclosurevars(load_callback).nonlocals['perform']
+                    started, release = asyncio.Event(), asyncio.Event()
+
+                    async def held_operation():
+                        started.set()
+                        await release.wait()
+
                     with user:
-                        next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer').set_value('AKTIF/BKTKOS')
+                        operation = asyncio.create_task(perform_callback(held_operation))
+                        await asyncio.wait_for(started.wait(), 3)
+                        bank_control = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer')
+                        self.assertTrue(bank_control.enabled)
+                        bank_control.set_value('AKTIF/BKTKOS')
+                    try:
+                        await user.should_see('AKTIF/BKTKOS selected; opening after the current operation finishes.', retries=100)
+                        self.assertEqual(inspect.getclosurevars(load_callback).nonlocals['loaded'].bank, 'AKTIF/BKT')
+                        self.assertEqual(table.rows, [])
+                        self.assertEqual(table.selected, [])
+                        self.assertTrue(table.props.get('loading'))
+                        with user:
+                            inspect.getclosurevars(load_callback).nonlocals['refresh']()
+                        self.assertEqual(table.rows, [])
+                    finally:
+                        release.set()
+                        await operation
                     await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
+                    for _ in range(100):
+                        if not table.props.get('loading'):
+                            break
+                        await asyncio.sleep(0.05)
+                    self.assertFalse(table.props.get('loading'))
+                    self.assertTrue(table.rows)
                     self.assertTrue(live_control.enabled)
                     user.find(marker='import-menu').click()
                     await asyncio.sleep(0.1)  # let the new dialog be created before selecting its button
@@ -292,7 +331,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     max(user.find('Load folder').elements, key=lambda element: element.id).mark('latest-local-load')
                     user.find(marker='latest-local-load').click()
                     for _ in range(100):
-                        if not any(dialog.value for dialog in user.find(ui.dialog).elements) and next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer').enabled:
+                        if not any(dialog.value for dialog in user.find(ui.dialog).elements) and not inspect.getclosurevars(load_callback).nonlocals['busy']:
                             break
                         await asyncio.sleep(0.05)
                     await user.should_see('Loaded transactions: 4', retries=100)
@@ -329,13 +368,13 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
                     remote_bank = max((e for e in user.find(ui.select).elements if e.props.get('label') == 'Remote Bank/Acquirer'), key=lambda e: e.id)
                     with user:
-                        remote_bank.set_value('All')
+                        remote_bank.set_value('AKTIF/BKT')
                     user.find(kind=ui.button, content='Read remote logs').click()
                     await user.should_see('Loaded transactions: 2', retries=100)
                     self.assertFalse(live_control.enabled)
                     self.assertFalse(live_control.value)
                     self.assertEqual(watcher_factory.call_count, watcher_starts)
-                    await user.should_see('Historical files loaded; live update is off.')
+                    await user.should_see('Live update is available only for today')
 
             finally:
                 await simulation.__aexit__(None, None, None)
@@ -427,7 +466,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(call.kwargs.get('new_tab') for call in navigate.call_args_list))
                 preview = await user.http_client.get(table.rows[0]['preview_url'])
                 self.assertEqual(preview.status_code, 200)
-                self.assertIn('Download log', preview.text)
+                self.assertIn('Loading transaction log...', preview.text)
                 self.assertIn(table.rows[0]['transuid'], preview.text)
                 self.assertNotIn(table.rows[1]['transuid'], preview.text)
                 user.find(kind=ui.button, content='Export').click()
@@ -460,6 +499,34 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     import_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
                 user.find('Load folder').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
+                from nicegui import run
+                original_io_bound = run.io_bound
+
+                async def slow_export(function, *args, **kwargs):
+                    if function.__name__ == 'export_logs':
+                        await asyncio.sleep(3.2)  # Longer than NiceGUI's page response timeout.
+                    return await original_io_bound(function, *args, **kwargs)
+
+                from urllib.parse import urljoin
+                preview_url = table.rows[0]['preview_url']
+                with patch('nicegui.run.io_bound', side_effect=slow_export):
+                    shell = await asyncio.wait_for(user.http_client.get(preview_url), timeout=2)
+                    self.assertEqual(shell.status_code, 200)
+                    self.assertIn('Loading transaction log...', shell.text)
+                    self.assertNotIn('nicegui.js', shell.text)
+                    self.assertNotIn('socket.io', shell.text)
+                    self.assertNotIn('setInterval', shell.text)
+                    self.assertNotIn('location.reload', shell.text)
+                    data_url = preview_url.replace('/transaction/', '/transaction-data/', 1)
+                    data = await user.http_client.get(data_url)
+                    self.assertEqual(data.status_code, 200)
+                    snapshot = data.json()
+                    self.assertIn('asc<0810>', snapshot['text'])
+                    download = await user.http_client.get(urljoin(preview_url, snapshot['download_url']))
+                    self.assertEqual(download.status_code, 200)
+                    self.assertEqual(download.text.replace('\r\n', '\n'), snapshot['text'])
+                    expired = await user.http_client.get('/transaction-data/expired?uid=test')
+                    self.assertEqual(expired.status_code, 404)
             finally:
                 await simulation.__aexit__(None, None, None)
                 output_patch.stop()

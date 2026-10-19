@@ -2,10 +2,16 @@
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
-    & .\.venv\Scripts\python.exe .\create_release.py --update-build-info
-    if ($LASTEXITCODE -ne 0) { throw 'Could not generate Git build metadata.' }
-    & .\.venv\Scripts\pyinstaller.exe --onefile --noconsole --name LogComparator --add-data "build_info.json;." main.py
-    if ($LASTEXITCODE -ne 0) { throw 'Executable build failed.' }
+    # PyInstaller logs progress to stderr; PowerShell 5 must use its exit code,
+    # rather than treating redirected informational output as a fatal error.
+    $ErrorActionPreference = 'Continue'
+    try {
+        & .\.venv\Scripts\python.exe .\create_release.py --build-only
+        $buildExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = 'Stop'
+    }
+    if ($buildExitCode -ne 0) { throw 'Executable build failed.' }
     Write-Output ('Executable ready: ' + (Join-Path $PSScriptRoot 'dist\LogComparator.exe'))
 } finally {
     Pop-Location

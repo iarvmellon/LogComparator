@@ -16,6 +16,8 @@ class AuditMessage:
     invalid_fields: set[str] = field(default_factory=set)
     emv_tags: dict[str, str] = field(default_factory=dict)
     emv_errors: list[str] = field(default_factory=list)
+    flow_dir: str = ""
+    is_logon: bool = False
 
 
 def normalized(key: str, value: str) -> str:

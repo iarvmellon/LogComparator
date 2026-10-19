@@ -1,6 +1,9 @@
 """SSH source access and live mirrors, with legacy SCP helpers retained."""
 from __future__ import annotations
 
+import source_memory
+import gzip
+import tarfile
 import base64
 import hashlib
 import re
@@ -241,12 +244,109 @@ def read_remote_logs(settings, names, target, progress=None):
         read_remote_files(settings, names, target, progress, log_files=True)
 
 
+def _read_archive(sftp, remote, local, stop=None, previous=None):
+    """Stream SSH gzip/tar data directly into an atomic RAM snapshot."""
+    attrs = sftp.stat(remote)
+    stamp = (attrs.st_size, attrs.st_mtime)
+    if previous == stamp:
+        return False, stamp
+    files = {}
+
+    def read_content(stream):
+        chunks = []
+        while True:
+            if stop and stop.is_set():
+                raise InterruptedError('SSH archive read cancelled')
+            chunk = stream.read(262144)
+            if not chunk:
+                return b''.join(chunks)
+            chunks.append(chunk)
+
+    try:
+        with sftp.open(remote, 'rb') as source:
+            if local.name.lower().endswith(('.tar.gz', '.tgz')):
+                with tarfile.open(fileobj=source, mode='r|gz') as archive:
+                    for member in archive:
+                        if stop and stop.is_set():
+                            return False, previous
+                        if not member.isfile():
+                            continue
+                        # No archive paths are ever written or used as local paths.
+                        name = PurePosixPath(member.name).name
+                        if not (safe_audit_name(name) or safe_log_name(name)):
+                            continue
+                        if core.is_gzip_file(Path(name)):
+                            raise ValueError('Nested compressed archive members are unsupported.')
+                        destination = local.parent / name
+                        if destination in files:
+                            raise ValueError(f'Duplicate archive source: {name}')
+                        with archive.extractfile(member) as content:
+                            files[destination] = read_content(content)
+            else:
+                with gzip.GzipFile(fileobj=source) as content:
+                    files[local.with_suffix('')] = read_content(content)
+        final = sftp.stat(remote)
+        if (final.st_size, final.st_mtime) != stamp:
+            raise OSError('Remote archive changed while reading; retrying')
+        if not files:
+            raise ValueError(f'No supported log or audit files in {local.name}')
+        if stop and stop.is_set():
+            return False, previous
+        source_memory.publish(local, files)
+        return True, stamp
+    except InterruptedError:
+        if stop and stop.is_set():
+            return False, previous
+        raise
+
+
+def _extract_local_archive(local, stop=None):
+    """Extract a downloaded historical archive locally; publish complete sources only."""
+    with tempfile.TemporaryDirectory(prefix='.extract-', dir=local.parent) as staging:
+        staging = Path(staging)
+        if local.name.lower().endswith(('.tar.gz', '.tgz')):
+            with tarfile.open(local, 'r:gz') as archive:
+                for member in archive:
+                    if stop and stop.is_set():
+                        return
+                    if not member.isfile():
+                        continue
+                    name = PurePosixPath(member.name).name
+                    if not (safe_audit_name(name) or safe_log_name(name)):
+                        continue
+                    if core.is_gzip_file(Path(name)):
+                        raise ValueError('Nested compressed archive members are unsupported.')
+                    destination = staging / name
+                    if destination.exists():
+                        raise ValueError(f'Duplicate archive source: {name}')
+                    with archive.extractfile(member) as source, destination.open('wb') as output:
+                        shutil.copyfileobj(source, output, 262144)
+        else:
+            with gzip.open(local, 'rb') as source, (staging / local.with_suffix('').name).open('wb') as output:
+                shutil.copyfileobj(source, output, 262144)
+        if stop and stop.is_set():
+            return
+        for source in staging.iterdir():
+            source.replace(local.parent / source.name)
+
+
 def _mirror_file(sftp, remote, local, stop=None, previous=None):
+    day = audit_date(local.name) or core.parse_log_date(local.name)
+    historical = bool(day and day < core.current_log_date())
+    changed, stamp = _mirror_source(sftp, remote, local, stop, previous, memory_archives=not historical)
+    if historical and local.name.lower().endswith(('.gz', '.gzip', '.tgz')) and local.is_file():
+        _extract_local_archive(local, stop)
+    return changed, stamp
+
+
+def _mirror_source(sftp, remote, local, stop=None, previous=None, *, memory_archives=True):
     """Reuse a verified local prefix, reading only appended remote bytes.
 
     A private staging file prevents the parser from seeing an interrupted read.
     Head/tail checks also detect replacement or truncation across reconnects.
     """
+    if memory_archives and local.name.lower().endswith((".gz", ".gzip", ".tgz")):
+        return _read_archive(sftp, remote, local, stop, previous)
     attrs = sftp.stat(remote)
     size = attrs.st_size
     stamp = (size, attrs.st_mtime)
@@ -288,8 +388,9 @@ def _mirror_file(sftp, remote, local, stop=None, previous=None):
 
 class RemoteSourceWatcher:
     """Persistent SSH connection, incremental reads and reconnectable discovery."""
-    def __init__(self, settings, selected_date, folder, interval=0.5):
+    def __init__(self, settings, selected_date, folder, interval=0.5, *, bank=None):
         self.settings, self.selected_date = settings, selected_date
+        self.bank = bank
         self.folder = Path(folder)
         self.interval = interval
         self.changed = threading.Event()
@@ -320,6 +421,8 @@ class RemoteSourceWatcher:
                                         return
                                     name = entry.filename
                                     if not stat.S_ISREG(entry.st_mode) or not validator(name) or date_of(name) != self.selected_date:
+                                        continue
+                                    if root == self.settings.audit_folder and self.bank and not names_for_bank([name], self.bank):
                                         continue
                                     try:
                                         changed, stamps[name] = _mirror_file(
@@ -353,7 +456,7 @@ class RemoteSourceWatcher:
 
 class RemoteAuditJob:
     """Fetch the other banks after the requested bank has loaded."""
-    def __init__(self, settings, names, folder):
+    def __init__(self, settings, names, folder, *, prepare_banks=(), selected_date=""):
         self.folder = Path(folder).resolve()
         self.cancel_event = threading.Event()
         self.done = threading.Event()
@@ -362,10 +465,14 @@ class RemoteAuditJob:
 
         def worker():
             try:
-                read_remote_files(settings, names, self.folder,
-                                lambda current, total, text: self.messages.put(text), self.cancel_event)
+                if names:
+                    read_remote_files(settings, names, self.folder,
+                                      lambda current, total, text: self.messages.put(text), self.cancel_event)
+                if not self.cancel_event.is_set() and prepare_banks:
+                    from web_services import prepare_bank_results
+                    prepare_bank_results(self.folder, prepare_banks, selected_date, self.cancel_event, self.messages.put)
                 if not self.cancel_event.is_set():
-                    self.messages.put('Background audits ready for all banks')
+                    self.messages.put('Background bank results ready')
             except Exception as error:
                 self.error = str(error)
                 self.messages.put(f'Background download failed: {error}')

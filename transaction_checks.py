@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Iterable
-from iso_checks import check_iso_messages, is_one_way_echo
+from iso_checks import check_iso_messages, is_one_way_echo, is_logon_pair, is_inbound_logon
 from diagnostic_common import check_original_transactions, normalized
 from spdh_checks import check_spdh_messages
 
@@ -25,6 +25,15 @@ def select_transaction_operation(transaction):
 def is_successful_protocol_only(transaction: Transaction) -> bool:
     if is_one_way_heartbeat(transaction):
         return True
+    if select_transaction_operation(transaction) == 'Logon' and transaction.iso_messages:
+        if all(is_inbound_logon(message) for message in transaction.iso_messages):
+            return True
+        requests = [m for m in transaction.iso_messages if m.phase == 'request']
+        responses = [m for m in transaction.iso_messages if m.phase == 'response']
+        return (bool(requests and responses)
+                and all(any(is_logon_pair(request, response) for response in responses) for request in requests)
+                and all(any(is_logon_pair(request, response) for request in requests) for response in responses)
+                and all(m.values.get('rc', '') in {'', '00'} for m in responses))
     if transaction.iso_messages or select_transaction_operation(transaction) not in {'Close_Batch', 'Generate_Key'}:
         return False
     by_process = {}
@@ -168,7 +177,7 @@ def select_possible_problem(transaction: Transaction, shared_rrn: bool = False,
     return "; ".join(dict.fromkeys(problems))
 
 
-def build_problem_columns(transactions: Iterable[Transaction], tango_findings: dict | None = None) -> dict[str, tuple[str, str]]:
+def build_problem_columns(transactions: Iterable[Transaction], tango_findings: dict | None = None, *, checkpoint=None) -> dict[str, tuple[str, str]]:
     """Return ISO/SPDH findings, keeping protocol-specific evidence separate."""
     transactions = list(transactions)
     exempt = {t.trans_uid: bool(re.search(r'(?:^|_)(?:Reversal|Void)(?:_|$)',
@@ -183,6 +192,8 @@ def build_problem_columns(transactions: Iterable[Transaction], tango_findings: d
             [(t.trans_uid, getattr(t, attribute), exempt[t.trans_uid]) for t in transactions],
             use_rrn=protocol == 'ISO')
         for t in transactions:
+            if checkpoint:
+                checkpoint()
             errors, warnings = checker(getattr(t, attribute), check_emv_completeness=emv_completeness_applies(t))
             phases_by_process = iso_rrn_phases(t) if protocol == 'ISO' else {}
             if any(p.get('request') and p.get('response') and p['request'] != p['response']

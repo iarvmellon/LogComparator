@@ -92,6 +92,10 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
     if not process.upper().startswith('OPN') or not phase:
         return None
     message = IsoMessage(process.upper(), phase[1].lower())
+    direction = re.search(r'^\s*Flow dir\s*:\s*([^\r\n]+)', text, re.M | re.I)
+    if direction:
+        message.flow_dir = direction[1].upper().replace(' ', '').replace('-->', '->')
+    message.is_logon = bool(re.search(r'\b(?:log[ -]?on|sign[ -]?on)\b', message_type, re.I))
     collected: dict[str, list[tuple[int, str]]] = defaultdict(list)
 
     def collect(name: str, value: str, number: str | None = None) -> None:
@@ -175,6 +179,9 @@ def parse_iso_message(text: str, process: str, flow_type: str, message_type: str
         if not message.values.get('original_rrn'):
             message.values.setdefault('original_stan', original[4:10])
             message.values.setdefault('original_time', original[10:20])
+    network_code = message.values.get('network_management_code')
+    if network_code:
+        message.is_logon = network_code == '001'
     message.emv_tags, message.emv_errors = parse_emv(text)
     return message
 
@@ -185,6 +192,19 @@ def is_one_way_echo(message: IsoMessage) -> bool:
             and (message.values.get('mti') in {'0860', '7080'}
                  or (message.values.get('mti') in {'0800', '0820'}
                      and message.values.get('network_management_code', '').lstrip('0') == '301')))
+
+
+def is_inbound_logon(message: IsoMessage) -> bool:
+    return (message.is_logon and message.phase == 'request'
+            and message.values.get('mti') == '0800' and message.flow_dir == 'NETWORK->TANGO')
+
+
+def is_logon_pair(request: IsoMessage, response: IsoMessage) -> bool:
+    return (request.process == response.process
+            and request.phase == 'request' and response.phase == 'response'
+            and request.values.get('mti') == '0800' and response.values.get('mti') == '0810'
+            and request.flow_dir == 'TANGO->NETWORK' and response.flow_dir == 'NETWORK->TANGO'
+            and (request.is_logon or response.is_logon))
 
 
 def check_iso_messages(messages: list[IsoMessage], *, check_emv_completeness=True) -> tuple[list[str], list[str]]:
@@ -201,13 +221,14 @@ def check_iso_messages(messages: list[IsoMessage], *, check_emv_completeness=Tru
     for process_messages in processes.values():
         requests = [m for m in process_messages if m.phase == 'request']
         responses = [m for m in process_messages if m.phase == 'response']
-        if requests and not responses and not all(is_one_way_echo(m) for m in requests):
+        if requests and not responses and not all(is_one_way_echo(m) or is_inbound_logon(m) for m in requests):
             warnings.append('missing ISO response (incomplete log or timeout)')
         if responses and not requests:
             warnings.append('ISO response without request (incomplete log)')
         for response in responses:
             mti = response.values.get('mti')
-            if mti in RESPONSE_MTIS.values() and not response.values.get('rc'):
+            if (mti in RESPONSE_MTIS.values() and not response.values.get('rc')
+                    and not any(is_logon_pair(request, response) for request in requests)):
                 warnings.append('missing response code')
             candidates = [r for r in requests if RESPONSE_MTIS.get(r.values.get('mti')) == mti and mti]
             known_requests = [r for r in requests if r.values.get('mti') in RESPONSE_MTIS]

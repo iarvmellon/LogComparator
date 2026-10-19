@@ -1,7 +1,7 @@
 """Web adapters over the existing parser/exporter; no Tkinter or NiceGUI needed."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +13,7 @@ import tempfile
 import hashlib
 from watchfiles import watch
 
+import source_memory
 import log_core as core
 from diagnostic_common import problem_display_text, problem_row_tag
 from tango_checks import scan_tango_diagnostics
@@ -22,15 +23,41 @@ from transaction_checks import build_problem_columns, is_successful_protocol_onl
 CORE_LOCK = RLock()
 BACKGROUND_LOCKS = {}
 SCAN_CACHE = OrderedDict()
+LOADED_CACHE = OrderedDict()
+READY_LOCK = RLock()
+FOREGROUND_PENDING = threading.Event()
+foreground_requests = 0
+READY_ROW_LIMIT = 250_000
+
+
+class PreparationInterrupted(Exception):
+    pass
+
+
+def _copy_loaded(result):
+    return replace(result, audits=list(result.audits), tango_logs=list(result.tango_logs),
+                   rows=[dict(row) for row in result.rows])
+
+
+def _ready_result(key, signature):
+    with READY_LOCK:
+        cached = LOADED_CACHE.get(key)
+        if cached is None or cached[0] != signature:
+            return None
+        LOADED_CACHE.move_to_end(key)
+        result = cached[1]
+    return _copy_loaded(result)
+
 
 
 class SourceWatcher:
     """Coalesce filesystem events without parsing files on the watcher thread."""
-    def __init__(self, *folders, selected_date=None):
+    def __init__(self, *folders, selected_date=None, bank=None):
         self.changed = threading.Event()
         self.stop_event = threading.Event()
         self.error = None
         self.selected_date = selected_date
+        self.bank = bank
         self.folders = tuple(sorted({Path(folder).resolve() for folder in folders}))
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -47,6 +74,8 @@ class SourceWatcher:
                         core.parse_log_date(Path(path).name) == today
                         or Path(path).name.startswith(('audit.OPN', 'audit.PTMS'))
                         and (today in Path(path).name or today.replace('-', '') in Path(path).name)
+                        and (not self.bank or core.path_matches_ptms_audit(Path(path), today)
+                             or core.bank_audit_code_matches(self.bank, Path(path).name.split('.')[1]))
                         for _, path in changes
                     ):
                         self.changed.set()
@@ -153,7 +182,7 @@ def source_signature(folder: Path, audit_folder: Path | None, selected_date: str
     paths.extend(core.list_local_audits(audit_folder or folder, selected_date, bank))
     result = []
     for path in sorted(set(paths)):
-        stat = path.stat()
+        stat = source_memory.stat(path)
         result.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
     return tuple(result)
 
@@ -162,7 +191,7 @@ def materialize_source(path: Path, cache_folder: Path) -> Path:
     """Leave originals untouched; publish a complete gzip extraction in the cache."""
     if not core.is_gzip_file(path):
         return path
-    stat = path.stat()
+    stat = source_memory.stat(path)
     key = hashlib.sha256(f'{path.resolve()}|{stat.st_mtime_ns}|{stat.st_size}'.encode()).hexdigest()[:24]
     target = cache_folder / key / path.with_suffix('').name
     if target.is_file():
@@ -177,7 +206,67 @@ def materialize_source(path: Path, cache_folder: Path) -> Path:
     return target
 
 
-def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *, audit_folder: Path | None = None, cache_folder: Path | None = None) -> LoadedLogs:
+def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *, audit_folder: Path | None = None, cache_folder: Path | None = None, background=False, cancel_event=None) -> LoadedLogs | None:
+    """Reuse ready results without waiting behind background parser work."""
+    global foreground_requests
+    folder = Path(folder).expanduser().resolve()
+    audit_folder = Path(audit_folder or folder).expanduser().resolve()
+    cache_folder = cache_folder or core.DEFAULT_CACHE
+    if selected_date and folder.is_dir() and audit_folder.is_dir() and bank in core.BANK_AUDIT_CODES:
+        key = (str(folder), str(audit_folder), bank, selected_date, str(cache_folder))
+        ready = _ready_result(key, source_signature(folder, audit_folder, selected_date, bank))
+        if ready is not None:
+            if progress:
+                progress(1, 1, 'Using ready bank results')
+            return ready
+
+    def checkpoint(*args):
+        if (cancel_event and cancel_event.is_set()) or FOREGROUND_PENDING.is_set():
+            raise PreparationInterrupted()
+
+    if background:
+        if FOREGROUND_PENDING.is_set() or not CORE_LOCK.acquire(blocking=False):
+            return None
+        try:
+            checkpoint()
+            return _load_logs(folder, bank, selected_date, checkpoint,
+                              audit_folder=audit_folder, cache_folder=cache_folder, _checkpoint=checkpoint)
+        except PreparationInterrupted:
+            return None
+        finally:
+            CORE_LOCK.release()
+    with READY_LOCK:
+        foreground_requests += 1
+        FOREGROUND_PENDING.set()
+    try:
+        return _load_logs(folder, bank, selected_date, progress,
+                          audit_folder=audit_folder, cache_folder=cache_folder)
+    finally:
+        with READY_LOCK:
+            foreground_requests -= 1
+            if not foreground_requests:
+                FOREGROUND_PENDING.clear()
+
+
+def prepare_bank_results(folder, banks, selected_date, cancel_event, message=None):
+    """Prepare each bank once; foreground requests can interrupt and take priority."""
+    for bank in banks:
+        if cancel_event.is_set():
+            return
+        if message:
+            message(f'Preparing {bank} for {selected_date} in the background')
+        try:
+            while not cancel_event.is_set():
+                result = load_logs(folder, bank, selected_date, background=True, cancel_event=cancel_event)
+                if result is not None:
+                    break
+                cancel_event.wait(0.1)
+        except Exception as error:
+            if message:
+                message(f'Could not prepare {bank}: {error}')
+
+
+def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *, audit_folder: Path | None = None, cache_folder: Path | None = None, _checkpoint=None) -> LoadedLogs:
     folder = folder.expanduser().resolve()
     if not folder.is_dir():
         raise ValueError('Select an existing log folder on this computer.')
@@ -201,6 +290,13 @@ def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *
         audits = core.list_local_audits(audit_folder, selected_date, bank)
         if not audits:
             raise ValueError(f'No audit files found for {bank} on {selected_date}.')
+        result_key = (str(folder), str(audit_folder), bank, selected_date, str(cache_folder))
+        signature = source_signature(folder, audit_folder, selected_date, bank)
+        ready = _ready_result(result_key, signature)
+        if ready is not None:
+            if progress:
+                progress(1, 1, 'Using ready bank results')
+            return ready
         audits = [materialize_source(path, cache_folder) for path in audits]
         logs = [materialize_source(path, cache_folder) for path in logs]
         scan_key = core.input_paths_cache_key(audits)
@@ -214,10 +310,19 @@ def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *
             SCAN_CACHE.move_to_end(scan_key)
             if progress:
                 progress(1, 1, 'Using cached transactions')
-        problems = build_problem_columns(transactions.values(), scan_tango_diagnostics(logs, set(transactions)))
+        def checkpoint():
+            if _checkpoint:
+                _checkpoint()
+
+        checkpoint()
+        findings = scan_tango_diagnostics(logs, set(transactions), progress=lambda *args: checkpoint())
+        problems = build_problem_columns(transactions.values(), findings, checkpoint=checkpoint)
+        checkpoint()
         local_reversals = successful_local_reversal_uids(transactions.values())
         rows = []
-        for transaction in sorted(transactions.values(), key=lambda t: t.first_index):
+        for row_index, transaction in enumerate(sorted(transactions.values(), key=lambda t: t.first_index)):
+            if row_index % 256 == 0:
+                checkpoint()
             if not core.transaction_matches_bank(transaction, bank):
                 continue
             uid = transaction.trans_uid
@@ -239,7 +344,16 @@ def load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, *
                 severity=problem_row_tag(raw_problem, spdh, iso, protocol_only_success=(
                     is_successful_protocol_only(transaction) or uid in local_reversals)),
             ))
-        return LoadedLogs(folder, bank, selected_date, audits, logs, rows, audit_folder)
+        result = LoadedLogs(folder, bank, selected_date, audits, logs, rows, audit_folder)
+        with READY_LOCK:
+            LOADED_CACHE[result_key] = (signature, result)
+            LOADED_CACHE.move_to_end(result_key)
+            while len(LOADED_CACHE) > 1 and (
+                len(LOADED_CACHE) > len(core.BANK_AUDIT_CODES)
+                or sum(len(entry[1].rows) for entry in LOADED_CACHE.values()) > READY_ROW_LIMIT
+            ):
+                LOADED_CACHE.popitem(last=False)
+        return _copy_loaded(result)
 
 
 def filter_rows(rows: list[dict], filters: dict[str, str], minimum: str = '', maximum: str = '', offset: int = 0) -> list[dict]:

@@ -86,9 +86,17 @@ def build_executable():
     builder = ROOT / '.venv' / 'Scripts' / 'pyinstaller.exe'
     result = subprocess.run(
         [str(builder), '--onefile', '--noconsole', '--name', 'LogComparator',
+         '--distpath', str(ROOT / 'build' / 'executable-stage'),
          '--add-data', 'build_info.json;.', 'main.py'], cwd=ROOT)
     if result.returncode:
-        raise RuntimeError('Executable build failed. The release tag remains published; rerun create_release.py to retry.')
+        raise RuntimeError('Executable build failed; the previous dist/LogComparator.exe is unchanged. '
+                           'Any published release tag remains available. Run build_executable.ps1 to retry.')
+    result = subprocess.run(
+        ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+         '-File', str(ROOT / 'publish_executable.ps1')], cwd=ROOT)
+    if result.returncode:
+        raise RuntimeError('Executable built but could not be published to dist/LogComparator.exe. '
+                           'Run build_executable.ps1 to retry; no new release tag is needed.')
 
 
 def main():
@@ -96,8 +104,13 @@ def main():
         if sys.argv[1:] == ['--update-build-info']:
             update_build_info()
             return 0
+        if sys.argv[1:] == ['--build-only']:
+            update_build_info()
+            build_executable()
+            print(f'Executable ready: {ROOT / "dist" / "LogComparator.exe"}. Reopen LogComparator to load it.')
+            return 0
         if sys.argv[1:]:
-            raise RuntimeError('Usage: create_release.py [--update-build-info]')
+            raise RuntimeError('Usage: create_release.py [--update-build-info | --build-only]')
         if not (ROOT / '.venv' / 'Scripts' / 'pyinstaller.exe').is_file():
             raise RuntimeError('Project virtual environment PyInstaller is missing.')
         tag = create_release()
