@@ -179,6 +179,8 @@ Selected single-transaction logs are prepared ahead of Open and reused while the
 
 When opening several transactions, their tabs are requested directly from your click. If the browser blocks additional tabs, allow pop-ups for this site and click Open again.
 
+Large transaction logs initially show the first 256 KiB so the tab can display text quickly. **Load more** adds the next part; **Load full log** loads the rest in small steps. **Download log** always saves the complete file. TANGO source searches scan byte chunks and decode only matching lines, rather than processing every line in Python.
+
 An opened transaction log is a snapshot. It does not refresh automatically when
 the main list updates. Right-click a row for **Open**, **Export**, and **Compare**.
 

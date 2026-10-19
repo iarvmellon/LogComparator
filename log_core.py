@@ -1413,22 +1413,41 @@ def scan_transactions_for_list(
     return transactions
 
 
+TANGO_READ_CHUNK_SIZE = 4 * 1024 * 1024
+
+
 def collect_tango_lines(
     tango_log_path: Path | None,
     transaction_uids: set[str],
 ) -> dict[str, list[str]]:
+    """Search bounded byte chunks in C; decode only matching complete lines."""
     lines_by_uid: dict[str, list[str]] = defaultdict(list)
     if not tango_log_path or not source_memory.is_file(tango_log_path) or not transaction_uids:
         return lines_by_uid
+    uid_bytes = {uid: uid.encode('utf-8') for uid in transaction_uids if uid}
 
-    uid_bytes = {uid: uid.encode("utf-8") for uid in transaction_uids if uid}
+    def collect(data):
+        for uid, encoded in uid_bytes.items():
+            position = data.find(encoded)
+            while position >= 0:
+                start = data.rfind(b'\n', 0, position) + 1
+                end = data.find(b'\n', position)
+                end = len(data) if end < 0 else end + 1
+                lines_by_uid[uid].append(data[start:end].decode('utf-8', errors='replace'))
+                position = data.find(encoded, end)
+
     with source_memory.open_source(tango_log_path) as handle:
-        for raw_line in handle:
-            for uid, encoded_uid in uid_bytes.items():
-                if encoded_uid in raw_line:
-                    lines_by_uid[uid].append(
-                        raw_line.decode("utf-8", errors="replace")
-                    )
+        pending = []
+        while chunk := handle.read(TANGO_READ_CHUNK_SIZE):
+            end = chunk.rfind(b'\n') + 1
+            if end:
+                pending.append(chunk[:end])
+                collect(b''.join(pending))
+                pending = [chunk[end:]] if end < len(chunk) else []
+            else:
+                pending.append(chunk)
+        if pending:
+            collect(b''.join(pending))
     return lines_by_uid
 
 

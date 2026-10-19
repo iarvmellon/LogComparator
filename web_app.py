@@ -10,6 +10,7 @@ import webbrowser
 import urllib.request
 import json
 import io
+import codecs
 import queue
 import tempfile
 import zipfile
@@ -86,40 +87,38 @@ h1{font-size:18px;font-weight:500}pre{font:13px Consolas,monospace;white-space:p
 #loading{display:flex;align-items:center;gap:8px;margin:16px 0}
 .spinner{width:18px;height:18px;border:3px solid #ddd;border-top-color:#1976d2;border-radius:50%;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}[hidden]{display:none!important}
+button{margin-right:8px;padding:6px 12px;cursor:pointer}
 a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;text-decoration:none}
 #error{color:#b00020}
 </style></head><body><h1>$preview_title</h1>
 <div id="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading transaction log...</div>
 <p id="error" role="alert" hidden></p><a id="download" hidden>Download log</a><pre id="log"></pre>
-<script>
-(async () => {
-  try {
-    const response = await fetch($preview_data_url, {cache: 'no-store'});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not load transaction');
-    document.getElementById('log').textContent = data.text;
-    const download = document.getElementById('download');
-    download.href = data.download_url;
-    download.hidden = false;
-    if (data.save_url) fetch(data.save_url).then(async response => {
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Copy failed');
-    }).catch(error => {
-      const message = document.getElementById('error');
-      message.textContent = 'Log opened, but saving the output copy failed: ' + error.message;
-      message.hidden = false;
-    });
-  } catch (error) {
-    const message = document.getElementById('error');
-    message.textContent = 'Could not open transaction: ' + error.message;
-    message.hidden = false;
-  } finally {
-    document.getElementById('loading').hidden = true;
-  }
-})();
-</script></body></html>'''
+<p id="log-status" role="status"></p><button id="more" hidden>Load more</button><button id="all" hidden>Load full log</button>
+<script src="/logcomparator-assets/transaction_view.js"></script>
+<script>window.logComparatorShowTransaction($preview_data_url);</script></body></html>'''
     document = Template(document).substitute(preview_title=title, preview_data_url=script_url)
     return HTMLResponse(document, headers={'Cache-Control': 'no-store'})
+
+
+PREVIEW_CHUNK_SIZE = 256 * 1024
+
+
+def read_preview_chunk(path, offset=0):
+    total = path.stat().st_size
+    if offset < 0 or offset > total:
+        raise ValueError('Invalid log position.')
+    with path.open('rb') as handle:
+        handle.seek(offset)
+        raw = handle.read(PREVIEW_CHUNK_SIZE)
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    text = decoder.decode(raw, final=offset + len(raw) >= total)
+    pending = decoder.getstate()[0]
+    next_offset = offset + len(raw) - len(pending)
+    if text.endswith('\r') and next_offset < total and next_offset > offset + 1:
+        text = text[:-1]
+        next_offset -= 1
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    return dict(text=text, next_offset=next_offset, total_bytes=total, has_more=next_offset < total)
 
 
 def preview_task(source_id, uid):
@@ -137,7 +136,7 @@ def preview_task(source_id, uid):
     async def generate():
         output = Path(tempfile.mkdtemp(prefix='preview-', dir=WORKSPACE.name))
         paths = await run.io_bound(export_logs, loaded, [uid], output, **settings)
-        text = await run.io_bound(paths[0].read_text, encoding='utf-8', errors='replace')
+        chunk = await run.io_bound(read_preview_chunk, paths[0])
         token = uuid.uuid4().hex
         PREVIEW_DOWNLOADS[token] = paths[0]
 
@@ -152,8 +151,8 @@ def preview_task(source_id, uid):
         while len(PREVIEW_DOWNLOADS) > 128:
             expired, _ = PREVIEW_DOWNLOADS.popitem(last=False)
             PREVIEW_SAVES.pop(expired, None)
-        return {'text': text, 'download_url': f'../transaction-download/{token}',
-                'save_url': f'../transaction-save/{token}'}
+        return {**chunk, 'download_url': f'../transaction-download/{token}',
+                'chunk_url': f'../transaction-chunk/{token}', 'save_url': f'../transaction-save/{token}'}
 
     task = asyncio.create_task(generate())
     # Read speculative failures so an un-opened selection never produces an
@@ -190,6 +189,18 @@ async def transaction_save(token: str):
     result = await asyncio.shield(entry['task'])
     return JSONResponse(result, status_code=400 if 'error' in result else 200,
                         headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/transaction-chunk/{token}')
+async def transaction_chunk(token: str, offset: int = 0):
+    path = PREVIEW_DOWNLOADS.get(token)
+    if path is None or not path.is_file():
+        return JSONResponse({'error': 'This log has expired. Reopen the transaction.'}, status_code=404)
+    try:
+        chunk = await run.io_bound(read_preview_chunk, path, offset)
+        return JSONResponse(chunk, headers={'Cache-Control': 'no-store'})
+    except ValueError as error:
+        return JSONResponse({'error': str(error)}, status_code=400)
 
 
 @app.get('/transaction-download/{token}')

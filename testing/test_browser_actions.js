@@ -43,5 +43,47 @@ const {Diff2HtmlUI} = require('../logcomparator_ui/assets/diff2html-ui-base.min.
   const failed=await render({error:'Export failed'},false);
   assert.equal(failed.loading.hidden,true);
   assert(failed.error.textContent.includes('Export failed'));
-  console.log('Direct multi-tab opening and comparison loading, rendering, download and errors passed');
+  const transactionScript=fs.readFileSync(path.join(__dirname,'../logcomparator_ui/assets/transaction_view.js'),'utf8');
+  async function transaction(responses) {
+    const elements={};
+    for (const id of ['log','error','log-status','more','all','download','loading']) elements[id]={textContent:'',hidden:['error','more','all','download'].includes(id),appendChild(node){this.textContent+=node.textContent;}};
+    const calls=[];
+    const context={window:{},setTimeout,
+      document:{getElementById:id=>elements[id],createTextNode:text=>({textContent:text})},
+      fetch:async url=>{calls.push(url);const data=responses[url];assert(data,`Unexpected request: ${url}`);return {ok:!data.error,json:async()=>data};},
+    };
+    vm.runInNewContext(transactionScript,context);
+    await context.window.logComparatorShowTransaction('/initial');
+    return {elements,calls};
+  }
+  const preview=await transaction({
+    '/initial':{text:'first',next_offset:5,total_bytes:9,has_more:true,chunk_url:'/chunk',download_url:'/full'},
+    '/chunk?offset=5':{text:'last',next_offset:9,total_bytes:9,has_more:false},
+  });
+  assert.equal(preview.elements.log.textContent,'first');
+  assert.equal(preview.elements.more.hidden,false);
+  assert.equal(preview.elements.loading.hidden,true);
+  assert.equal(preview.elements.download.href,'/full');
+  assert(preview.elements['log-status'].textContent.includes('Download log contains the full file'));
+  assert.deepEqual(preview.calls,['/initial']);
+  await preview.elements.more.onclick();
+  assert.equal(preview.elements.log.textContent,'firstlast');
+  assert.equal(preview.elements.more.hidden,true);
+  const full=await transaction({
+    '/initial':{text:'A',next_offset:1,total_bytes:3,has_more:true,chunk_url:'/chunk',download_url:'/full'},
+    '/chunk?offset=1':{text:'B',next_offset:2,total_bytes:3,has_more:true},
+    '/chunk?offset=2':{text:'C',next_offset:3,total_bytes:3,has_more:false},
+  });
+  await full.elements.all.onclick();
+  assert.equal(full.elements.log.textContent,'ABC');
+  assert.equal(full.elements.all.hidden,true);
+  const broken=await transaction({
+    '/initial':{text:'visible',next_offset:7,total_bytes:20,has_more:true,chunk_url:'/chunk',download_url:'/full'},
+    '/chunk?offset=7':{error:'Read failed'},
+  });
+  await broken.elements.more.onclick();
+  assert.equal(broken.elements.log.textContent,'visible');
+  assert(broken.elements.error.textContent.includes('Read failed'));
+  assert.equal(broken.elements.more.disabled,false);
+  console.log('Direct tabs, comparison viewer and progressive transaction preview passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
