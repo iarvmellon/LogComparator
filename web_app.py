@@ -141,16 +141,25 @@ html, body { height:100%; overflow:hidden; }
 .toolbar .panel { padding:6px; }
 .toolbar .q-radio__label, .toolbar .q-checkbox__label { white-space:nowrap; }
 .data-time-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; width:100%; }
-.data-panel, .time-panel, .filters-panel { overflow-x:auto; }
-.time-controls { display:grid; grid-template-columns:repeat(2,minmax(150px,1fr)) 112px; gap:8px; align-items:center; min-width:440px; width:100%; }
+.data-panel, .time-panel { overflow:hidden; }
+.filters-panel { overflow-x:auto; }
+.time-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)) minmax(80px,.55fr); gap:8px; align-items:center; width:100%; }
 .time-controls > * { width:100%; min-width:0; }
 .filter-controls { display:grid; grid-template-columns:repeat(11,minmax(70px,1fr)) minmax(160px,1.6fr); gap:8px; min-width:1050px; width:100%; }
-.data-controls { display:grid; grid-template-columns:minmax(110px,1fr) minmax(110px,1fr) 160px max-content minmax(90px,.7fr); gap:8px; align-items:center; min-width:600px; width:100%; }
+.data-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr) max-content minmax(0,.7fr); gap:8px; align-items:center; width:100%; }
 .data-controls > * { min-width:0; }
-.data-controls .q-field--auto-height .q-field__control, .data-controls .q-field--auto-height .q-field__native { min-height:32px; }
 .data-controls .status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.data-time-row .q-field__control-container, .data-time-row .q-field__native { min-width:0; }
+@media (max-width:1000px) { .data-time-row { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:600px) {
+    .data-controls { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .data-controls .status { grid-column:2 / span 2; }
+}
+
 .q-field--outlined .q-field__control { border-radius:0; background:white; }
 .q-field--dense .q-field__control, .q-field--dense .q-field__marginal { height:32px; }
+.data-time-row .q-field--dense .q-field__control, .data-time-row .q-field--dense .q-field__marginal { height:40px; min-height:40px; }
+.data-time-row .q-field--auto-height .q-field__native { min-height:40px; }
 .q-btn { border-radius:0; text-transform:none; }
 .q-table__container { border:1px solid #aaa; border-radius:0; width:100%; }
 .q-table th { font-weight:bold; background:white; }
@@ -158,12 +167,14 @@ html, body { height:100%; overflow:hidden; }
 .q-table tbody tr.problem { background:#ff9999; }
 .q-table tbody tr.warning { background:#fff2b3; }
 .q-table tbody tr.approved { background:#c8f7c5; }
-.q-table tbody tr.selected { background:#0078d7!important; color:white; }
+.q-table tbody tr.selected > td { box-shadow:inset 0 2px #0078d7,inset 0 -2px #0078d7; }
+.q-table tbody tr.selected > td:first-child { box-shadow:inset 0 2px #0078d7,inset 0 -2px #0078d7,inset 2px 0 #0078d7; }
+.q-table tbody tr.selected > td:last-child { box-shadow:inset 0 2px #0078d7,inset 0 -2px #0078d7,inset -2px 0 #0078d7; }
+.q-table tbody tr.selected > td::after { background:transparent; }
 .log-table .q-table__middle { flex:1 1 0; min-height:0; max-height:none; overflow:auto; }
 .log-table .q-table__bottom { flex-shrink:0; }
 .log-table thead th { position:sticky; top:0; z-index:1; }
 .filter-input, .problem-filter { width:100%; min-width:0; }
-.q-table tr.selected a { color:white; }
 .diff2html-view { max-height:72vh; overflow:auto; width:100%; }
 .diff2html-view .d2h-file-side-diff { overflow-x:auto; }
 .diff2html-view .d2h-code-line, .diff2html-view .d2h-code-side-line { font-family:Consolas,monospace; }
@@ -346,7 +357,7 @@ def index():
     async def live_tick():
         nonlocal last_live_check, pending_bank
         if loaded is not None and source_day != core.current_log_date():
-            if source_watcher or live_enabled.value:
+            if source_watcher or live_enabled.value or live_enabled.enabled:
                 configure_live()
             return
         if busy or loaded is None or not live_enabled.value or source_watcher is None:
@@ -441,8 +452,8 @@ def index():
             refresh()
             live_status.set_text(f'Updated {datetime.now():%H:%M:%S}')
             if not live:
-                if remote_import:
-                    live_enabled.set_value(source_day == core.current_log_date())
+                if remote_import or local_import:
+                    live_enabled.set_value(False)
                 configure_live()
             if remote_import:
                 remaining = [name for name in names if name not in foreground]

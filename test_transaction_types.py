@@ -108,7 +108,7 @@ acqId : asc<{acquirer}>
         formats += ('networkManageCode : asc<{code}>',
                     '<field type="A" name="networkManageCode">{code}</field>')
         for parser in (parse_block, parse_block_for_list):
-            for code, label in (("001", "LOGON"), ("1", "LOGON"), ("301", "ECHO")):
+            for code, label in (("001", "LOGON"), ("1", "LOGON"), ("301", "ECHO"), ("201", "Cutoff Initiation / Cutover")):
                 for template in formats:
                     for acquirer in ("050", "065"):
                         transaction = Transaction("test", 0)

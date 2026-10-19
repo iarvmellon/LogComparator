@@ -7,11 +7,13 @@ removed. Parsing, transaction checks, CLI analysis and export formats are retain
 
 The top toolbar keeps **Compare** on the first row with **Open** and **Export**.
 **Time range** keeps From, To and Timezone on one row, and **Filters** keeps
-all fields, including Possible problem, on one row. These rows scroll
-horizontally when the window is too narrow.
+all fields, including Possible problem, on one row. The toolbar and Filters
+can scroll horizontally when the window is too narrow.
 The **Data** and **Time range** panels share one row. All **Data** controls use
-a compact single row; Bank/Acquirer has the same 32px field height as Log folder
-and Audit folder. Narrow screens can scroll horizontally inside Data.
+a compact single row. All fields in **Data** and **Time range** use the original
+40px Bank/Acquirer height. Data and Time range have no scrollbars: fields resize
+to fit, the panels stack on narrow windows, and Data controls use two rows on
+small screens.
 Hover over its shortened live status to read the full message. The workspace
 fills the browser viewport; the table uses the remaining height and provides
 the only vertical scrollbar, with its header and pagination kept visible.
@@ -58,6 +60,14 @@ A standalone inbound LOGON 0800 NETWORK-to-TANGO is also green without requiring
 an 0810 response. A standalone outbound 0800 still requires its 0810 reply.
 An explicit non-approved response code does not qualify; existing diagnostic
 errors and warnings retain their row-color priority.
+
+Selected transactions have a blue outline around the row instead of a blue
+fill. Their green, yellow or red diagnostic background and normal text/link
+colors remain visible. The outline does not change row height or column widths.
+
+OPN network-management messages with DE70 `201` are displayed as
+**Cutoff Initiation / Cutover**, with the observed request/response flow suffix,
+instead of Network_Management.
 
 ## Start the application
 
@@ -146,7 +156,8 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   so no SSH/SCP executable or Linux system package needs to
   be installed in the LogComparator container. Connections originate from the
   server/container, not the browser PC. The remote files remain unchanged.
-  **Live update** starts automatically only when the imported date is today.
+  **Live update** is always off when the GUI starts and after a new local or
+  remote import. Enable it manually for today when needed.
   Historical imports remain readable but their Live update checkbox is disabled. A persistent SSH/SFTP
   connection checks today's log/audit files approximately every
   500 ms (plus network, file-reading and parsing time). Only appended bytes are

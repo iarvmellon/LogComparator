@@ -164,6 +164,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 user = await simulation.__aenter__()
             try:
                 await user.open('/')
+                self.assertFalse(next(iter(user.find(marker='live-update').elements)).value)
                 await user.should_not_see(marker='ssh-menu')
                 await user.should_see('Import local logs')
                 await user.should_see('Import remote logs (UAT)')
@@ -272,7 +273,9 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len(table.rows), 2)
                     live_control = next(iter(user.find(marker='live-update').elements))
                     self.assertTrue(live_control.enabled)
-                    self.assertTrue(live_control.value)
+                    self.assertFalse(live_control.value)
+                    with user:
+                        live_control.set_value(True)
                     await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKT')
                     with user:
                         await live_timer.callback()

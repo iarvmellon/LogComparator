@@ -866,6 +866,8 @@ def select_transaction_operation(transaction: Transaction) -> str:
         return "Logon"
     if codes == {"301"}:
         return "Echo_Test"
+    if codes == {"201"}:
+        return "Cutoff_Initiation"
     mti = select_iso_mti(transaction)
     if mti in TANGO_TRANSACTION_MTI_NAMES:
         return TANGO_TRANSACTION_MTI_NAMES[mti]
@@ -898,6 +900,7 @@ def select_transaction_type(transaction: Transaction) -> str:
         "Logoff": "LOGOFF",
         "Sign-on_Request": "LOGON",
         "Sign-on_Response": "LOGON",
+        "Cutoff_Initiation": "Cutoff Initiation / Cutover",
         "Echo_Test": "ECHO",
         "Echo_Test_Request": "ECHO",
         "Echo_Test_Response": "ECHO",
