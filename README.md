@@ -5,8 +5,11 @@ PTMS/SPDH and OPN/ISO audit streams. **The NiceGUI / Quasar web interface is now
 the only UI.** The former Tkinter window and its calendar/layout code have been
 removed. Parsing, transaction checks, CLI analysis and export formats are retained.
 
-The **Data** and **Time range** panels share one row. Controls wrap within each
-panel as needed, keeping both panels side by side.
+The **Data** and **Time range** panels share one row. All **Data** controls use
+a compact single row; narrow screens can scroll horizontally inside Data.
+Hover over its shortened live status to read the full message. The workspace
+fills the browser viewport; the table uses the remaining height and provides
+the only vertical scrollbar, with its header and pagination kept visible.
 
 ## Start the application
 
@@ -62,6 +65,12 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   folders use the existing hardcoded UAT configuration; none of these fields
   are displayed or editable in the browser. Opening the dialog automatically
   connects and lists the available logs; no separate connection button is needed.
+  Temporary SSH timeouts/disconnections retry automatically up to three attempts
+  (one- and two-second delays). Connection timeout is 30 seconds; SSH banner,
+  authentication, channel opening and directory reads allow 60 seconds. Keepalive
+  packets are sent every 15 seconds. After the attempts fail, **Retry listing**
+  retries in the same dialog. Closing the dialog prevents further retries.
+  Authentication, permissions and host-key failures are not retried automatically.
   The remote folders are `/opt/tango/MLNPSP01/log` and
   `/opt/tango/MLNPSP01/audit`, matching the local Linux source layout.
   The historical stored sudo password is used as the SSH password fallback;
@@ -88,16 +97,20 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   so no SSH/SCP executable or Linux system package needs to
   be installed in the LogComparator container. Connections originate from the
   server/container, not the browser PC. The remote files remain unchanged.
-  **Live update** starts automatically for remote imports. A persistent SSH/SFTP
-  connection checks the selected date's log/audit folders approximately every
+  **Live update** starts automatically only when the imported date is today.
+  Historical imports remain readable but their Live update checkbox is disabled. A persistent SSH/SFTP
+  connection checks today's log/audit files approximately every
   500 ms (plus network, file-reading and parsing time). Only appended bytes are
   read after the initial snapshot, with small prefix checks to detect rotation
-  or truncation. New files for all banks are discovered automatically. Replaced
+  or truncation. New files for all banks are discovered automatically, only for today. Replaced
   or truncated files are read again; rotated files remain in the local history.
   Interrupted reads retain the last complete cache. Lost connections reconnect
   automatically using the confirmed host fingerprint; a changed key is rejected.
   Disable **Live update** to pause remote reads, or enable it to resume.
-  The date stays fixed across midnight: import the next date explicitly.
+  Today means the date on the computer/container running LogComparator,
+  independent of the display timezone. At midnight the old live session stops;
+  import the new date explicitly. Historical files for other banks are read
+  once in the background, without continuous remote polling.
 - The requested bank is displayed first. While remote live update is enabled,
   the SSH reader also loads other banks for the same date into the cache.
   Bank/Acquirer switches reuse these files. A bank selected before its files
@@ -110,15 +123,16 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   restricted to UTC-3 through UTC+3. Changing it shifts displayed timestamps and
   range bounds together to retain the selected instants.
 - Enable **Live update** in Data after a local filesystem import to follow growing
-  local logs. Filesystem notifications trigger updates for the selected date and
+  local logs for today. Events for older dates are ignored.
+  Filesystem notifications trigger updates for the current date and
   bank, reloading only after changes, additions or rotation. Events are grouped
   for about 50–250 ms and checked by the UI every 250 ms; parsing time adds to
   this delay. A five-second metadata check also catches missed events on network
   shares and retries incomplete reads. Updates run
   in a worker and preserve filters, From/To, timezone, sorting, pagination and
   selected transaction IDs that remain visible. Updated responses/diagnostics
-  replace the corresponding rows. The selected date stays fixed across midnight;
-  import the next date explicitly. Disable the checkbox to pause updates.
+  replace the corresponding rows. Live update stops at midnight;
+  import the new current date explicitly. Disable the checkbox to pause updates.
   Failed reads (including incomplete gzip files) retain the last successful list
   and retry on the next check; the live status shows the error. This polls local
   files only and does not repeat SSH downloads. Large files may take longer than

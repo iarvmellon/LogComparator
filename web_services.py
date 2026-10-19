@@ -26,10 +26,11 @@ SCAN_CACHE = OrderedDict()
 
 class SourceWatcher:
     """Coalesce filesystem events without parsing files on the watcher thread."""
-    def __init__(self, *folders):
+    def __init__(self, *folders, selected_date=None):
         self.changed = threading.Event()
         self.stop_event = threading.Event()
         self.error = None
+        self.selected_date = selected_date
         self.folders = tuple(sorted({Path(folder).resolve() for folder in folders}))
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -41,7 +42,13 @@ class SourceWatcher:
                 for changes in watch(*self.folders, stop_event=self.stop_event, recursive=False,
                                      debounce=250, step=50, rust_timeout=1000):
                     self.error = None
-                    if changes:
+                    today = core.current_log_date()
+                    if (self.selected_date is None or self.selected_date == today) and any(
+                        core.parse_log_date(Path(path).name) == today
+                        or Path(path).name.startswith(('audit.OPN', 'audit.PTMS'))
+                        and (today in Path(path).name or today.replace('-', '') in Path(path).name)
+                        for _, path in changes
+                    ):
                         self.changed.set()
             except Exception as error:
                 self.error = str(error)

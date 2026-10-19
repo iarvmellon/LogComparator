@@ -9,16 +9,45 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import paramiko
 
 from remote_logs import (RemoteConnection, UnknownHostKey, audit_date,
                          banks_for_audits, download_audits, list_remote_audits, names_for_bank, RemoteAuditJob,
-                         list_remote_sources, download_tango_logs, uat_connection, connect, read_remote_files, RemoteSourceWatcher)
+                         list_remote_sources, download_tango_logs, uat_connection, connect, read_remote_files, RemoteSourceWatcher, is_transient_ssh_error, open_sftp)
 
 
 class RemoteLogsTests(unittest.TestCase):
+    def test_historical_source_never_opens_live_connection(self):
+        with tempfile.TemporaryDirectory() as folder, patch('remote_logs.connect') as connector, patch('log_core.current_log_date', return_value='2026-10-15'):
+            watcher = RemoteSourceWatcher(RemoteConnection('localhost', 'reader', ''), '2026-10-14', folder)
+            watcher.thread.join(2)
+            self.assertFalse(watcher.thread.is_alive())
+            connector.assert_not_called()
+
+    def test_failed_sftp_startup_closes_channel(self):
+        client = Mock()
+        channel = client.get_transport.return_value.open_session.return_value
+        channel.invoke_subsystem.side_effect = TimeoutError('SFTP setup timed out')
+        with self.assertRaises(TimeoutError):
+            open_sftp(client)
+        channel.close.assert_called_once()
+
+    def test_retry_only_transient_transport_errors(self):
+        import errno
+        for error in (TimeoutError('timed out'), EOFError(), ConnectionResetError(),
+                      paramiko.SSHException('connection dropped'), OSError(errno.EHOSTUNREACH, 'unreachable')):
+            with self.subTest(error=type(error).__name__):
+                self.assertTrue(is_transient_ssh_error(error))
+        for error in (UnknownHostKey('SHA256:test'), ValueError('changed host key'),
+                      paramiko.AuthenticationException('bad password'), PermissionError(),
+                      FileNotFoundError()):
+            with self.subTest(error=type(error).__name__):
+                self.assertFalse(is_transient_ssh_error(error))
+        wrapped = paramiko.ssh_exception.NoValidConnectionsError({('127.0.0.1', 22): TimeoutError()})
+        self.assertTrue(is_transient_ssh_error(wrapped))
+
     def test_uat_defaults_stay_server_side_and_explicit_credentials_override(self):
         from types import SimpleNamespace
         import log_core as core
@@ -43,7 +72,8 @@ class RemoteLogsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'explicit password'):
             uat_connection(username='another-user', settings=settings)
 
-    def test_password_connection_listing_scp_and_atomic_failure(self):
+    @patch('log_core.current_log_date', return_value='2026-10-14')
+    def test_password_connection_listing_scp_and_atomic_failure(self, current_day):
         key = paramiko.RSAKey.generate(2048)
         fingerprint = 'SHA256:' + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip('=')
         name = 'audit.OPNBISOBKT01.2026-10-14'
@@ -189,6 +219,8 @@ class RemoteLogsTests(unittest.TestCase):
                 self.assertFalse(any(path.name.startswith('.ssh-') for path in target.iterdir()))
                 fail_reads.clear()
                 files['/remote audit/' + name] = content
+                old_name = 'audit.OPNBISOBKT01.2026-10-13'
+                files['/remote audit/' + old_name] = b'historical data'
                 watcher = RemoteSourceWatcher(trusted, '2026-10-14', target, interval=0.05)
                 def wait_for(predicate):
                     deadline = time.monotonic() + 8
@@ -224,6 +256,11 @@ class RemoteLogsTests(unittest.TestCase):
                     files['/remote audit/' + name] = b'after reconnect\n'
                     wait_for(lambda: has_bytes(name, b'after reconnect\n'))
                     wait_for(lambda: watcher.error is None)
+                    self.assertFalse((target / old_name).exists())
+                    self.assertFalse(any(path.endswith(old_name) for path, _, _ in reads))
+                    current_day.return_value = '2026-10-15'
+                    watcher.thread.join(2)
+                    self.assertFalse(watcher.thread.is_alive())
                 finally:
                     watcher.close()
                     watcher.thread.join(3)

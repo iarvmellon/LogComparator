@@ -28,7 +28,7 @@ from web_services import (COLUMNS, comparison_diff, export_logs,
 from web_services import inspect_local_sources, source_signature, SourceWatcher
 from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, list_remote_sources,
                          audit_date, banks_for_audits, names_for_bank, read_remote_files as download_audits, read_remote_logs as download_tango_logs,
-                         RemoteSourceWatcher)
+                         RemoteSourceWatcher, RemoteAuditJob, is_transient_ssh_error)
 
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
 PREVIEW_SOURCES = OrderedDict()
@@ -63,12 +63,20 @@ CSS = '''
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 .q-page { padding:0; }
 .nicegui-content { padding:8px 12px; gap:12px; }
+html, body { height:100%; overflow:hidden; }
+.workspace { height:100vh; height:100dvh; max-width:100%; box-sizing:border-box; overflow:hidden; flex-wrap:nowrap; }
+.workspace > * { flex-shrink:0; }
+.workspace > .log-table { flex:1 1 0; min-height:0; overflow:hidden; }
 .menubar { background:#fafafa; border-bottom:1px solid #c4c4c4; gap:0; width:100%; }
 .menubar .q-btn { min-height:26px; padding:0 10px; font-weight:400; }
 .panel { border:1px solid #aaa; border-radius:0; padding:8px 10px; min-width:0; }
 .panel legend { padding:0 6px; font-size:13px; }
 .toolbar { gap:14px; align-items:center; width:100%; flex-wrap:wrap; }
 .data-time-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; width:100%; }
+.data-panel { overflow-x:auto; }
+.data-controls { display:grid; grid-template-columns:minmax(110px,1fr) minmax(110px,1fr) 160px max-content minmax(90px,.7fr); gap:8px; align-items:center; min-width:600px; width:100%; }
+.data-controls > * { min-width:0; }
+.data-controls .status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .q-field--outlined .q-field__control { border-radius:0; background:white; }
 .q-field--dense .q-field__control, .q-field--dense .q-field__marginal { height:32px; }
 .q-btn { border-radius:0; text-transform:none; }
@@ -79,7 +87,9 @@ body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 .q-table tbody tr.warning { background:#fff2b3; }
 .q-table tbody tr.approved { background:#c8f7c5; }
 .q-table tbody tr.selected { background:#0078d7!important; color:white; }
-.log-table .q-table__middle { max-height:calc(100vh - 380px); min-height:240px; }
+.log-table .q-table__middle { flex:1 1 0; min-height:0; max-height:none; overflow:auto; }
+.log-table .q-table__bottom { flex-shrink:0; }
+.log-table thead th { position:sticky; top:0; z-index:1; }
 .filter-input { width:120px; flex:1 0 95px; }
 .problem-filter { min-width:260px; flex:2 0 260px; }
 .q-table tr.selected a { color:white; }
@@ -88,13 +98,13 @@ body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 .diff2html-view .d2h-code-line, .diff2html-view .d2h-code-side-line { font-family:Consolas,monospace; }
 .status { font-size:13px; }
 .log-text { white-space:pre; overflow:auto; font-family:Consolas,monospace; font-size:13px; max-height:70vh; margin:0; }
-@media(max-width:900px) { .log-table .q-table__middle { max-height:65vh; } }
 '''
 
 
 @ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
 def index():
     ui.add_css(CSS)
+    ui.context.client.content.classes('workspace')
     loaded = None
     source_day = ''
     source_is_remote = False
@@ -222,16 +232,25 @@ def index():
     def configure_live():
         nonlocal source_watcher
         stop_watching()
+        if loaded and source_day != core.current_log_date():
+            live_enabled.set_value(False)
+            live_enabled.disable()
+            live_status.set_text(f'Live update is available only for today ({core.current_log_date()})')
+            return
         live_enabled.enable()
         if live_enabled.value and loaded:
             source_watcher = (RemoteSourceWatcher(remote_connection, source_day, loaded.folder) if source_is_remote
-                              else SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder))
+                              else SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder, selected_date=source_day))
             live_status.set_text('Live — watching source files')
         else:
             live_status.set_text('Live paused' if loaded else 'Load files to start live updates')
 
     async def live_tick():
         nonlocal last_live_check, pending_bank
+        if loaded is not None and source_day != core.current_log_date():
+            if source_watcher or live_enabled.value:
+                configure_live()
+            return
         if busy or loaded is None or not live_enabled.value or source_watcher is None:
             return
         if pending_bank:
@@ -251,7 +270,7 @@ def index():
                                  else f'Filesystem watcher unavailable; checking every 5 s: {source_watcher.error}')
 
     async def load_source(live=False, remote_import=None, local_import=False):
-        if live and (busy or loaded is None or not live_enabled.value):
+        if live and (busy or loaded is None or not live_enabled.value or source_day != core.current_log_date()):
             return
         async def action():
             nonlocal loaded, source_day, background_job, pending_bank, preview_id, audit_source_folder, last_source_signature, source_is_remote, remote_connection
@@ -324,10 +343,15 @@ def index():
             live_status.set_text(f'Updated {datetime.now():%H:%M:%S}')
             if not live:
                 if remote_import:
-                    live_enabled.set_value(True)
+                    live_enabled.set_value(source_day == core.current_log_date())
                 configure_live()
             if remote_import:
-                background_status.set_text('SSH live update reads all banks in the background.')
+                remaining = [name for name in names if name not in foreground]
+                if source_day != core.current_log_date() and remaining:
+                    background_job = RemoteAuditJob(connection, remaining, result.folder)
+                    background_status.set_text('Reading historical audits for other banks once in the background.')
+                else:
+                    background_status.set_text('SSH live update reads files for today for all banks.' if live_enabled.value else 'Historical files loaded; live update is off.')
         await perform(action, quiet=live)
 
     def options():
@@ -549,6 +573,7 @@ def index():
         log_names = []
         trusted_fingerprint = ''
         pending_key = None
+        listing = False
         with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
             ui.label('Import remote logs (UAT)').classes('text-lg')
             message = ui.label().classes('text-sm whitespace-pre-wrap')
@@ -563,36 +588,58 @@ def index():
                 import_button.set_enabled(bool(available) and listed_connection is not None)
 
             async def inspect_remote():
-                nonlocal listed_connection, names, log_names, pending_key
+                nonlocal listed_connection, names, log_names, pending_key, listing
+                if listing or dialog.is_deleted:
+                    return
+                listing = True
                 listed_connection = None
+                pending_key = None
                 names = []
                 log_names = []
                 import_button.disable()
+                calendar.disable()
+                remote_bank.set_options([])
+                retry_button.set_visibility(False)
                 trust_button.set_visibility(False)
-                message.set_text('Connecting and listing remote audit files...')
                 try:
-                    candidate = connection()
-                    names, log_names = await run.io_bound(list_remote_sources, candidate)
-                    if dialog.is_deleted:
-                        return
-                    listed_connection = candidate
-                    days = sorted({audit_date(name) for name in names} | {core.parse_log_date(name) for name in log_names})
-                    calendar.props['options'] = [day.replace('-', '/') for day in days]
-                    calendar.props['events'] = calendar.props['options']
-                    calendar.set_enabled(bool(days))
-                    calendar.update()
-                    calendar.set_value(source_day if source_day in days else (days[-1] if days else None))
-                    update_banks()
-                    message.set_text(f'{len(names)} audit files; {len(log_names)} Tango logs; {len(days)} dates available.' if days else 'No dated source files found.')
-                except UnknownHostKey as error:
-                    if dialog.is_deleted:
-                        return
-                    pending_key = (candidate, error.fingerprint)
-                    message.set_text(f'First connection to {candidate.endpoint}. Verify this fingerprint with the remote host administrator:\n{error.fingerprint}')
-                    trust_button.set_visibility(True)
-                except Exception as error:
-                    if not dialog.is_deleted:
-                        message.set_text(f'Could not list remote audits: {error}. Close and reopen this dialog to retry.')
+                    for attempt in range(1, 4):
+                        message.set_text(f'Connecting and listing remote audit files... Attempt {attempt}/3')
+                        try:
+                            candidate = connection()
+                            names, log_names = await run.io_bound(list_remote_sources, candidate)
+                            if dialog.is_deleted:
+                                return
+                            listed_connection = candidate
+                            days = sorted({audit_date(name) for name in names} | {core.parse_log_date(name) for name in log_names})
+                            calendar.props['options'] = [day.replace('-', '/') for day in days]
+                            calendar.props['events'] = calendar.props['options']
+                            calendar.set_enabled(bool(days))
+                            calendar.update()
+                            calendar.set_value(source_day if source_day in days else (days[-1] if days else None))
+                            update_banks()
+                            message.set_text(f'{len(names)} audit files; {len(log_names)} Tango logs; {len(days)} dates available.' if days else 'No dated source files found.')
+                            return
+                        except UnknownHostKey as error:
+                            if dialog.is_deleted:
+                                return
+                            pending_key = (candidate, error.fingerprint)
+                            message.set_text(f'First connection to {candidate.endpoint}. Verify this fingerprint with the remote host administrator:\n{error.fingerprint}')
+                            trust_button.set_visibility(True)
+                            return
+                        except Exception as error:
+                            if dialog.is_deleted:
+                                return
+                            if attempt < 3 and is_transient_ssh_error(error):
+                                message.set_text(f'Temporary SSH connection problem: {error}. Retrying automatically ({attempt + 1}/3)...')
+                                await asyncio.sleep(attempt)
+                                if dialog.is_deleted:
+                                    return
+                                continue
+                            message.set_text(f'Could not list remote audits: {error}. Use Retry listing to try again.')
+                            retry_button.set_visibility(True)
+                            return
+                finally:
+                    listing = False
 
             async def trust_host():
                 nonlocal trusted_fingerprint
@@ -624,6 +671,8 @@ def index():
                 dialog.delete()
                 await load_source(remote_import=request)
 
+            retry_button = ui.button('Retry listing', on_click=inspect_remote).props('outline')
+            retry_button.set_visibility(False)
             trust_button = ui.button('Trust this host fingerprint and connect', on_click=trust_host).props('outline')
             trust_button.set_visibility(False)
             calendar = ui.date(on_change=update_banks).mark('remote-import-calendar')
@@ -782,12 +831,14 @@ def index():
         return control
 
     with ui.element('div').classes('data-time-row'):
-        with panel('Data').classes('grow'), ui.row().classes('items-center gap-3'):
-            folder = ui.input('Log folder', value=str(core.DEFAULT_IMPORT) if core.LOCAL_AUDIT_DIR else '', placeholder=str(core.DEFAULT_IMPORT)).props('outlined dense readonly').classes('w-80 grow')
-            audit_path = ui.input('Audit folder', value=str(core.LOCAL_AUDIT_DIR or '')).props('outlined dense readonly').classes('w-80 grow')
-            bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-48')
+        with panel('Data').classes('data-panel'), ui.element('div').classes('data-controls'):
+            folder = ui.input('Log folder', value=str(core.DEFAULT_IMPORT) if core.LOCAL_AUDIT_DIR else '', placeholder=str(core.DEFAULT_IMPORT)).props('outlined dense readonly').classes('w-full')
+            audit_path = ui.input('Audit folder', value=str(core.LOCAL_AUDIT_DIR or '')).props('outlined dense readonly').classes('w-full')
+            bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-full')
             live_enabled = ui.checkbox('Live update', value=False, on_change=configure_live).props('dense').mark('live-update')
             live_status = ui.label().classes('status').mark('live-status')
+            with live_status:
+                ui.tooltip().bind_text_from(live_status, 'text')
         with panel('Time range'), ui.row().classes('items-center gap-2'):
             from_datetime = datetime_picker('From', '00:00:00')
             to_datetime = datetime_picker('To', '23:59:59')

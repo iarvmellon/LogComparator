@@ -3,6 +3,7 @@ import tempfile
 import asyncio
 import unittest
 import os
+from unittest.mock import patch
 from pathlib import Path
 
 from web_services import comparison_diff, export_logs, filter_rows, inspect_local_sources, load_logs, with_settings
@@ -23,7 +24,8 @@ def source_fixture(folder):
 
 
 class WebServicesTests(unittest.TestCase):
-    def test_filesystem_watcher_detects_writes_and_stops(self):
+    @patch('log_core.current_log_date', return_value='2026-10-14')
+    def test_filesystem_watcher_detects_writes_and_stops(self, current_day):
         from web_services import SourceWatcher
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
@@ -37,6 +39,10 @@ class WebServicesTests(unittest.TestCase):
                         break
                 self.assertTrue(watcher.changed.is_set())
                 self.assertIsNone(watcher.error)
+                watcher.changed.clear()
+                (folder / 'tango.log.2026-10-13').write_text('old data')
+                (folder / 'audit.OPNBISOBKT01.20261013').write_text('old audit')
+                self.assertFalse(watcher.changed.wait(0.5))
             finally:
                 watcher.close()
                 watcher.thread.join(timeout=3)
@@ -143,6 +149,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                                 'LOCAL_AUDIT_DIR': audits, 'DEFAULT_OUTPUT': root / 'exports',
                                 'DEFAULT_CACHE': root / 'cache'}.items():
                 stack.enter_context(patch('log_core.' + name, value))
+            current_day = stack.enter_context(patch('log_core.current_log_date', return_value='2026-10-14'))
             with patch('sys.argv', ['web_app.py', '--no-browser']):
                 simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
                 user = await simulation.__aenter__()
@@ -214,7 +221,9 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 fixture.mkdir()
                 source_fixture(fixture)
                 remote_name = 'audit.OPNBISOBKT01.2026-10-14'
-                listing = Mock(side_effect=[UnknownHostKey('SHA256:test-host'), ([remote_name], ['tango.log.2026-10-14'])])
+                listing = Mock(side_effect=[TimeoutError('timed out'), UnknownHostKey('SHA256:test-host'),
+                                            TimeoutError('timed out'), TimeoutError('timed out'),
+                                            ([remote_name], ['tango.log.2026-10-14'])])
 
                 def copy_remote(connection, names, target, progress):
                     import log_core as core
@@ -237,6 +246,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     await user.should_see('SHA256:test-host', retries=100)
                     user.find('Trust this host fingerprint and connect').click()
                     await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
+                    self.assertEqual(listing.call_count, 5)
                     self.assertEqual(listing.call_args.args[0].fingerprint, 'SHA256:test-host')
                     self.assertEqual(listing.call_args.args[0].audit_folder, '/opt/tango/MLNPSP01/audit')
                     self.assertEqual(listing.call_args.args[0].log_folder, '/opt/tango/MLNPSP01/log')
@@ -255,7 +265,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     live_control = next(iter(user.find(marker='live-update').elements))
                     self.assertTrue(live_control.enabled)
                     self.assertTrue(live_control.value)
-                    await user.should_see('SSH live update reads all banks')
+                    await user.should_see('SSH live update reads files for today')
                     with user:
                         await live_timer.callback()
                     self.assertEqual(len(table.rows), 2)
@@ -277,10 +287,56 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
                     self.assertTrue(live_control.enabled)
                     user.find(marker='import-menu').click()
+                    await asyncio.sleep(0.1)  # let the new dialog be created before selecting its button
                     await user.should_see('Import local log folder')
-                    user.find('Load folder').click()
+                    max(user.find('Load folder').elements, key=lambda element: element.id).mark('latest-local-load')
+                    user.find(marker='latest-local-load').click()
+                    for _ in range(100):
+                        if not any(dialog.value for dialog in user.find(ui.dialog).elements) and next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer').enabled:
+                            break
+                        await asyncio.sleep(0.05)
                     await user.should_see('Loaded transactions: 4', retries=100)
                     self.assertTrue(live_control.enabled)
+                    listing.reset_mock(side_effect=True)
+                    listing.side_effect = [TimeoutError('timed out')] * 3 + [([remote_name], ['tango.log.2026-10-14'])]
+                    user.find(marker='remote-import-menu').click()
+                    await user.should_see('Use Retry listing to try again.', retries=100)
+                    self.assertEqual(listing.call_count, 3)
+                    user.find(kind=ui.button, content='Retry listing').click()
+                    await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
+                    self.assertEqual(listing.call_count, 4)
+                    max(user.find('Cancel').elements, key=lambda element: element.id).mark('cancel-retry-dialog')
+                    user.find(marker='cancel-retry-dialog').click()
+                    listing.reset_mock(side_effect=True)
+                    listing.side_effect = TimeoutError('timed out')
+                    user.find(marker='remote-import-menu').click()
+                    await user.should_see('Retrying automatically', retries=100)
+                    max(user.find('Cancel').elements, key=lambda element: element.id).mark('cancel-pending-retry')
+                    user.find(marker='cancel-pending-retry').click()
+                    await asyncio.sleep(1.2)
+                    self.assertEqual(listing.call_count, 1)
+                    current_day.return_value = '2026-10-15'
+                    with user:
+                        await live_timer.callback()
+                    self.assertFalse(live_control.enabled)
+                    self.assertFalse(live_control.value)
+                    await user.should_see('Live update is available only for today (2026-10-15)')
+                    watcher_factory = live_timer.callback.__globals__['RemoteSourceWatcher']
+                    watcher_starts = watcher_factory.call_count
+                    listing.reset_mock(side_effect=True)
+                    listing.return_value = ([remote_name], ['tango.log.2026-10-14'])
+                    user.find(marker='remote-import-menu').click()
+                    await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
+                    remote_bank = max((e for e in user.find(ui.select).elements if e.props.get('label') == 'Remote Bank/Acquirer'), key=lambda e: e.id)
+                    with user:
+                        remote_bank.set_value('All')
+                    user.find(kind=ui.button, content='Read remote logs').click()
+                    await user.should_see('Loaded transactions: 2', retries=100)
+                    self.assertFalse(live_control.enabled)
+                    self.assertFalse(live_control.value)
+                    self.assertEqual(watcher_factory.call_count, watcher_starts)
+                    await user.should_see('Historical files loaded; live update is off.')
+
             finally:
                 await simulation.__aexit__(None, None, None)
 

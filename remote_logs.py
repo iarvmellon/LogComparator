@@ -9,6 +9,8 @@ import tempfile
 import threading
 import queue
 import shutil
+import errno
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -81,12 +83,44 @@ def connect(settings):
     client.set_missing_host_key_policy(PinnedHostKey(settings.fingerprint))
     try:
         client.connect(host, port=port, username=settings.username.strip(), password=settings.password,
-                       allow_agent=settings.allow_keys, look_for_keys=settings.allow_keys, timeout=15,
-                       banner_timeout=15, auth_timeout=15, channel_timeout=30)
+                       allow_agent=settings.allow_keys, look_for_keys=settings.allow_keys, timeout=30,
+                       banner_timeout=60, auth_timeout=60, channel_timeout=60)
+        client.get_transport().set_keepalive(15)
         return client
     except Exception:
         client.close()
         raise
+
+
+def is_transient_ssh_error(error):
+    """Retry transport failures, never credentials, permissions or host-key checks."""
+    if isinstance(error, (UnknownHostKey, paramiko.AuthenticationException,
+                          paramiko.BadHostKeyException, ValueError)):
+        return False
+    if isinstance(error, paramiko.ssh_exception.NoValidConnectionsError):
+        return bool(error.errors) and all(is_transient_ssh_error(item) for item in error.errors.values())
+    return (isinstance(error, (TimeoutError, EOFError, ConnectionError, paramiko.SSHException))
+            or isinstance(error, OSError) and error.errno in {
+                errno.ETIMEDOUT, errno.ECONNRESET, errno.ECONNABORTED,
+                errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH,
+                errno.EPIPE, getattr(socket, 'EAI_AGAIN', -3)})
+
+
+def open_sftp(client):
+    """Bound subsystem startup too, before an SFTP client exists to set timeouts."""
+    channel = client.get_transport().open_session(timeout=60)
+    channel.settimeout(60)
+    deadline = threading.Timer(60, channel.close)
+    deadline.daemon = True
+    deadline.start()
+    try:
+        channel.invoke_subsystem('sftp')
+        return paramiko.SFTPClient(channel)
+    except Exception:
+        channel.close()
+        raise
+    finally:
+        deadline.cancel()
 
 
 def audit_date(name):
@@ -122,8 +156,8 @@ class RemoteImportRequest:
 
 def list_remote_sources(settings):
     """Read the same log/audit directories as a local import, over SSH/SFTP."""
-    with connect(settings) as client, client.open_sftp() as sftp:
-        sftp.get_channel().settimeout(30)
+    with connect(settings) as client, open_sftp(client) as sftp:
+        sftp.get_channel().settimeout(60)
         audits = sorted(entry.filename for entry in sftp.listdir_attr(settings.audit_folder)
                         if stat.S_ISREG(entry.st_mode) and safe_audit_name(entry.filename)
                         and audit_date(entry.filename))
@@ -267,7 +301,7 @@ class RemoteSourceWatcher:
 
     def _run(self):
         stamps = {}
-        while not self.stop_event.is_set():
+        while not self.stop_event.is_set() and self.selected_date == core.current_log_date():
             try:
                 with connect(self.settings) as client:
                     self.client = client
@@ -276,12 +310,14 @@ class RemoteSourceWatcher:
                     client.get_transport().set_keepalive(15)
                     with client.open_sftp() as sftp:
                         sftp.get_channel().settimeout(15)
-                        while not self.stop_event.is_set():
+                        while not self.stop_event.is_set() and self.selected_date == core.current_log_date():
                             for root, validator, date_of in (
                                 (self.settings.audit_folder, safe_audit_name, audit_date),
                                 (self.settings.log_folder, safe_log_name, core.parse_log_date),
                             ):
                                 for entry in sftp.listdir_attr(root):
+                                    if self.stop_event.is_set() or self.selected_date != core.current_log_date():
+                                        return
                                     name = entry.filename
                                     if not stat.S_ISREG(entry.st_mode) or not validator(name) or date_of(name) != self.selected_date:
                                         continue
@@ -326,7 +362,7 @@ class RemoteAuditJob:
 
         def worker():
             try:
-                download_audits(settings, names, self.folder,
+                read_remote_files(settings, names, self.folder,
                                 lambda current, total, text: self.messages.put(text), self.cancel_event)
                 if not self.cancel_event.is_set():
                     self.messages.put('Background audits ready for all banks')

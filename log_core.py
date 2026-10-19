@@ -2066,9 +2066,14 @@ def bank_audit_code_matches(bank: str, audit_code: str) -> bool:
     return bool(audit_code_family_pattern(BANK_AUDIT_CODES[bank]).match(audit_code))
 
 
+def current_log_date() -> str:
+    """The source server/application day, independent of the display timezone."""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def parse_log_date(name: str) -> str | None:
     if name == "tango.log":
-        return datetime.now().strftime("%Y-%m-%d")
+        return current_log_date()
     match = re.match(
         r"^tango\.log\.(?P<date>\d{4}-\d{2}-\d{2})(?:$|[ ._-])",
         name,
