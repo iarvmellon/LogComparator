@@ -449,6 +449,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 await user.open('/')
                 inputs = {element.props.get('label'): element for element in user.find(ui.input).elements}
                 self.assertFalse(any('Source date' in (label or '') for label in inputs))
+                self.assertNotIn('Log folder', inputs)
+                self.assertNotIn('Audit folder', inputs)
                 with patch.object(user.navigate, 'to') as navigate:
                     user.find(marker='help-readme').click()
                     navigate.assert_called_once_with('/readme', new_tab=True)
@@ -463,7 +465,6 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 selects = {element.props.get('label'): element for element in user.find(ui.select).elements}
                 self.assertEqual(selects['Timezone'].options, ['UTC-3', 'UTC-2', 'UTC-1', 'UTC', 'UTC+1', 'UTC+2', 'UTC+3'])
                 with user:
-                    inputs['Log folder'].set_value(str(folder))
                     selects['Bank/Acquirer'].set_value('AKTIF/BKT')
                 self.assertFalse(any(e.props.get('label') in ('Load', 'SSH/SCP (UAT)') for e in user.find(ui.button).elements))
                 await user.should_not_see(marker='ssh-menu')

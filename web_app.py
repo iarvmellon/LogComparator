@@ -178,14 +178,14 @@ html, body { height:100%; overflow:hidden; }
 .time-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)) minmax(80px,.55fr); gap:8px; align-items:center; width:100%; }
 .time-controls > * { width:100%; min-width:0; }
 .filter-controls { display:grid; grid-template-columns:repeat(11,minmax(70px,1fr)) minmax(160px,1.6fr); gap:8px; min-width:1050px; width:100%; }
-.data-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr) max-content minmax(0,.7fr); gap:8px; align-items:center; width:100%; }
+.data-controls { display:grid; grid-template-columns:minmax(140px,1fr) max-content minmax(0,1fr); gap:8px; align-items:center; width:100%; }
 .data-controls > * { min-width:0; }
 .data-controls .status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .data-time-row .q-field__control-container, .data-time-row .q-field__native { min-width:0; }
 @media (max-width:1000px) { .data-time-row { grid-template-columns:minmax(0,1fr); } }
 @media (max-width:600px) {
-    .data-controls { grid-template-columns:repeat(3,minmax(0,1fr)); }
-    .data-controls .status { grid-column:2 / span 2; }
+    .data-controls { grid-template-columns:minmax(0,1fr) max-content; }
+    .data-controls .status { grid-column:1 / -1; }
 }
 
 .q-field--outlined .q-field__control { border-radius:0; background:white; }
@@ -230,6 +230,7 @@ def index():
     source_is_remote = False
     remote_connection = None
     audit_source_folder = core.LOCAL_AUDIT_DIR
+    source_folder = core.DEFAULT_IMPORT
     busy = False
     background_job = None
     pending_bank = None
@@ -429,10 +430,10 @@ def index():
         if live and (busy or loaded is None or not live_enabled.value or source_day != core.current_log_date()):
             return
         async def action():
-            nonlocal loaded, source_day, background_job, pending_bank, preview_id, audit_source_folder, last_source_signature, source_is_remote, remote_connection
+            nonlocal loaded, source_day, background_job, pending_bank, preview_id, audit_source_folder, source_folder, last_source_signature, source_is_remote, remote_connection
             bank_value = bank.value
             date_value = source_day
-            folder_value = folder.value or ''
+            folder_value = str(source_folder) if source_folder else ''
             audit_for_load = audit_source_folder
             if not bank_value:
                 raise ValueError('Select a bank/acquirer.')
@@ -476,11 +477,10 @@ def index():
                 source_is_remote = False
                 remote_connection = None
             if remote_import:
-                folder.set_value(str(source))
+                source_folder = source
                 if pending_bank is None:
                     bank.set_value(bank_value)
             audit_source_folder = result.audit_folder
-            audit_path.set_value(str(result.audit_folder))
             if not live:
                 preview_id = uuid.uuid4().hex
             PREVIEW_SOURCES[preview_id] = (result, options(), session_settings.output)
@@ -708,11 +708,11 @@ def index():
                         source_message.set_text(str(error))
 
             async def choose_path():
-                nonlocal source_day, audit_source_folder
+                nonlocal source_day, audit_source_folder, source_folder
                 if not import_bank.value or not local_date.value:
                     ui.notify('Select an available date and bank/acquirer.', type='warning')
                     return
-                folder.set_value(str(log_source))
+                source_folder = log_source
                 source_day = local_date.value
                 audit_source_folder = audit_source
                 bank.set_value(import_bank.value)
@@ -886,7 +886,7 @@ def index():
         dialog.open()
 
     def close_workspace():
-        nonlocal loaded, background_job, pending_bank, preview_id, source_day, audit_source_folder, source_is_remote, remote_connection
+        nonlocal loaded, background_job, pending_bank, preview_id, source_day, audit_source_folder, source_folder, source_is_remote, remote_connection
         if background_job:
             background_job.cancel_event.set()
         loaded = background_job = pending_bank = preview_id = None
@@ -900,9 +900,8 @@ def index():
         table.selected = []
         table.update()
         update_actions()
-        folder.set_value('')
+        source_folder = core.DEFAULT_IMPORT
         audit_source_folder = core.LOCAL_AUDIT_DIR
-        audit_path.set_value(str(core.LOCAL_AUDIT_DIR or ''))
         from_datetime.set_value('')
         to_datetime.set_value('')
         clear_filters()
@@ -999,8 +998,6 @@ def index():
 
     with ui.element('div').classes('data-time-row'):
         with panel('Data').classes('data-panel'), ui.element('div').classes('data-controls'):
-            folder = ui.input('Log folder', value=str(core.DEFAULT_IMPORT) if core.LOCAL_AUDIT_DIR else '', placeholder=str(core.DEFAULT_IMPORT)).props('outlined dense readonly').classes('w-full')
-            audit_path = ui.input('Audit folder', value=str(core.LOCAL_AUDIT_DIR or '')).props('outlined dense readonly').classes('w-full')
             bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-full')
             live_enabled = ui.checkbox('Live update', value=False, on_change=configure_live).props('dense').mark('live-update')
             live_status = ui.label().classes('status').mark('live-status')

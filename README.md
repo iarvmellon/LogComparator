@@ -67,8 +67,9 @@ are read in memory. Files from earlier days are saved and extracted locally.
 
 ## Data and switching banks
 
-**Log folder** and **Audit folder** show the source folders in use.
-**Selected date** shows the loaded day and bank.
+**Data** contains the Bank/Acquirer selector and Live update controls.
+The source folders are managed by the import process. **Selected date** shows
+the loaded day and bank.
 
 Use **Bank/Acquirer** to switch banks within the same day. The previous list
 clears immediately while the new bank loads. If its results have already been
@@ -435,6 +436,8 @@ Then save the complete image:
 ```powershell
 docker save -o logcomparator.tar logcomparator:local
 ```
+
+`logcomparator.tar` is a generated build file and is excluded from Git.
 
 **2. Transfer the files to Linux.**
 
