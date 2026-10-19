@@ -5,7 +5,7 @@ PTMS/SPDH and OPN/ISO audit streams. **The NiceGUI / Quasar web interface is now
 the only UI.** The former Tkinter window and its calendar/layout code have been
 removed. Parsing, transaction checks, CLI analysis and export formats are retained.
 
-The top toolbar keeps **Compare** on the first row with **Open** and **Export**.
+The top toolbar keeps **Compare** on the first row with **Open** and **Export**. Selected date and each action button have 40px spacing between them for easier reading.
 **Time range** keeps From, To and Timezone on one row, and **Filters** keeps
 all fields, including Possible problem, on one row. The toolbar and Filters
 can scroll horizontally when the window is too narrow.
@@ -17,6 +17,14 @@ small screens.
 Hover over its shortened live status to read the full message. The workspace
 fills the browser viewport; the table uses the remaining height and provides
 the only vertical scrollbar, with its header and pagination kept visible.
+Column headers are 2px larger than row text and use a heavier bold weight.
+Column widths start from the widest filtered value or header, then shrink
+together to fit the available table width so the last column is fully visible.
+The selection checkbox column keeps a fixed 44px width. Truncated values show
+the full value on hover. Widths
+update after loading, filtering, changing visible columns or changing font size.
+Possible problem displays at most 100 characters, including the trailing `...`.
+Hover over it to read the full description; filters and exports retain the full text.
 Progress is shown only in the last footer row. Its space stays reserved while
 idle, so progress and status changes never resize the transaction list.
 
@@ -134,7 +142,9 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   The historical stored sudo password is used as the SSH password fallback;
   existing SSH agent/default keys are also tried. SHA256 host fingerprints are
   accepted automatically whenever a new remote connection workflow requires
-  acceptance, including when reopening the dialog. No confirmation button is shown. Subsequent reads in that workflow
+  acceptance, including when reopening the dialog. Acceptance happens inside the
+  first SSH handshake, without disconnecting and opening a second connection.
+  No confirmation button is shown. Subsequent reads in that workflow
   reuse the accepted fingerprint; a changed key within the workflow is rejected. Choose an available
   date directly in the calendar (green dots identify available dates), and **Remote Bank/Acquirer**, then **Read remote logs**. Only the selected bank is loaded and displayed first;
   there is no foreground All option.
@@ -150,8 +160,14 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   same Tango diagnostics can run as with a local import.
   The password stays in the server-side UAT configuration; there is no password
   input, prefilled password value or credential override in the web dialog.
-  The remote account must be able to list both folders through SFTP and
-  read the source files through SFTP; no sudo is used. The remote host needs its
+  Remote import first logs in over SSH as `j.arvanitis`, then uses `sudo` to
+  start an elevated SFTP server for listing and reading the log/audit folders.
+  The sudo password is sent only when sudo prompts, never in the command line.
+  Passwordless sudo also works without sending a password into the SFTP stream.
+  The remote account needs sudo permission to run the existing SFTP server binary.
+  A stalled TCP opening is retried once with a fresh connection after a 10-second
+  timeout, before authentication. Authentication and sudo failures are not retried
+  by this step. Persistent TCP timeouts identify the stage before SSH login and sudo. The remote host needs its
   SSH service and SFTP subsystem available. LogComparator uses Python Paramiko,
   so no SSH/SCP executable or Linux system package needs to
   be installed in the LogComparator container. Connections originate from the
@@ -1112,3 +1128,5 @@ These generated identifiers support row export and comparison; they are not
 Tango transaction IDs. BKT/BKTKOS link Logons without acquirer IDs appear under
 both banks because they use the shared OPNBISOBKT process. Explicit acquirer IDs
 still restrict financial transactions and Logons to the matching bank.
+
+The Selection viewer to the right of Time range independently shows or hides Warnings, Errors, Succeeded and Unknown transactions. All four are enabled initially; these controls combine with the time and text filters. Unknown controls rows without a diagnostic category.

@@ -138,10 +138,12 @@ html, body { height:100%; overflow:hidden; }
 .panel legend { padding:0 6px; font-size:13px; }
 .toolbar { gap:8px; align-items:center; width:100%; flex-wrap:nowrap; overflow-x:auto; }
 .toolbar > * { flex-shrink:0; }
+.toolbar .selected-date, .toolbar .toolbar-action { margin-left:32px; }
 .toolbar .panel { padding:6px; }
 .toolbar .q-radio__label, .toolbar .q-checkbox__label { white-space:nowrap; }
-.data-time-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; width:100%; }
+.data-time-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content; gap:14px; align-items:start; width:100%; }
 .data-panel, .time-panel { overflow:hidden; }
+.selection-controls { display:flex; align-items:center; gap:8px; height:40px; white-space:nowrap; }
 .filters-panel { overflow-x:auto; }
 .time-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)) minmax(80px,.55fr); gap:8px; align-items:center; width:100%; }
 .time-controls > * { width:100%; min-width:0; }
@@ -164,6 +166,12 @@ html, body { height:100%; overflow:hidden; }
 .q-table__container { border:1px solid #aaa; border-radius:0; width:100%; }
 .q-table th { font-weight:bold; background:white; }
 .q-table th, .q-table td { font-size:var(--log-font,13px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
+.log-table thead th { font-size:calc(var(--log-font,13px) + 2px); font-weight:800; }
+.log-table th, .log-table td { overflow:hidden; text-overflow:ellipsis; }
+.log-table th:first-child, .log-table td:first-child { width:44px!important; min-width:44px!important; max-width:44px!important; padding:0 6px!important; text-align:center; }
+.log-table th:first-child .q-checkbox, .log-table td:first-child .q-checkbox { vertical-align:middle; }
+.log-table th:first-child .q-checkbox__inner, .log-table td:first-child .q-checkbox__inner { font-size:32px!important; }
+
 .q-table tbody tr.problem { background:#ff9999; }
 .q-table tbody tr.warning { background:#fff2b3; }
 .q-table tbody tr.approved { background:#c8f7c5; }
@@ -197,6 +205,7 @@ def index():
     pending_bank = None
     preview_id = None
     font_size = 13
+    column_revision = 0
     previous_offset = 0
     last_source_signature = None
     source_watcher = None
@@ -239,6 +248,9 @@ def index():
         refresh()
 
     def clear_bank_results():
+        nonlocal column_revision
+        column_revision += 1
+        table.props['data-column-revision'] = column_revision
         table.props['loading'] = True
         table.rows = []
         table.selected = []
@@ -249,6 +261,7 @@ def index():
             selected_date.set_text(f'Selected date:  {source_day}  |  {bank.value} (loading)')
 
     def refresh():
+        nonlocal column_revision
         if loaded is None:
             return
         if loaded.bank != bank.value:
@@ -262,8 +275,12 @@ def index():
                 raise ValueError('Use YYYY-MM-DD HH:MM:SS in From and To (24-hour time).') from None
             if minimum and maximum and minimum > maximum:
                 raise ValueError('From must be before To.')
+            column_revision += 1
+            table.props['data-column-revision'] = column_revision
             table.props['loading'] = False
             table.rows = filter_rows(loaded.rows, {key: control.value or '' for key, control in filters.items()}, minimum, maximum, offset())
+            hidden_severities = {severity for severity, control in viewer_filters.items() if not control.value}
+            table.rows = [row for row in table.rows if row.get('severity') not in hidden_severities]
             if preview_id:
                 for row in table.rows:
                     row['preview_url'] = f'/transaction/{preview_id}?' + urlencode({'uid': row['transuid']})
@@ -730,6 +747,9 @@ def index():
                                 names, log_names = await run.io_bound(list_remote_sources, candidate)
                             if dialog.is_deleted:
                                 return
+                            if candidate.effective_fingerprint:
+                                trusted_fingerprint = candidate.effective_fingerprint
+                                candidate = connection()
                             listed_connection = candidate
                             days = sorted({audit_date(name) for name in names} | {core.parse_log_date(name) for name in log_names})
                             calendar.props['options'] = [day.replace('-', '/') for day in days]
@@ -902,10 +922,10 @@ def index():
             internal = ui.checkbox('Tango Internal', value=False).props('dense')
             outbound = ui.checkbox('Tango→Network', value=True).props('dense')
             inbound = ui.checkbox('Network→Tango', value=True).props('dense')
-        selected_date = ui.label('Selected date:  Not selected').classes('text-sm')
-        open_button = ui.button('Open', on_click=toolbar_open).props('outline dense').classes('w-24')
-        export_button = ui.button('Export', on_click=export_action).props('outline dense').classes('w-24')
-        compare_button = ui.button('Compare', on_click=lambda: export_action('compare')).props('outline dense').classes('w-24')
+        selected_date = ui.label('Selected date:  Not selected').classes('text-sm selected-date')
+        open_button = ui.button('Open', on_click=toolbar_open).props('outline dense').classes('w-24 toolbar-action')
+        export_button = ui.button('Export', on_click=export_action).props('outline dense').classes('w-24 toolbar-action')
+        compare_button = ui.button('Compare', on_click=lambda: export_action('compare')).props('outline dense').classes('w-24 toolbar-action')
 
     def datetime_picker(label, default_time):
         async def open_picker():
@@ -951,6 +971,12 @@ def index():
             to_datetime = datetime_picker('To', '23:59:59')
             timezone = ui.select([f'UTC{i:+d}' if i else 'UTC' for i in range(-3, 4)], value='UTC', label='Timezone', on_change=change_timezone).props('outlined dense').classes('w-28')
 
+        with panel('Selection viewer'), ui.element('div').classes('selection-controls'):
+            viewer_filters = {
+                severity: ui.checkbox(label, value=True, on_change=refresh).props('dense').mark(f"viewer-{severity or 'unknown'}")
+                for severity, label in (('warning', 'Warnings'), ('problem', 'Errors'), ('approved', 'Succeeded'), ('', 'Unknown'))
+            }
+
     with panel('Filters').classes('w-full filters-panel'), ui.element('div').classes('filter-controls'):
         for key, label in COLUMNS:
             if key in ('datetime', 'possibleproblem'):
@@ -963,10 +989,17 @@ def index():
                      on_select=selection_changed)
     table.classes('log-table').props('dense flat bordered separator=cell virtual-scroll')
     table.props['visible-columns'] = [key for key, _ in COLUMNS]
+
+    def install_table_sizing():
+        ui.run_javascript("const {installColumnSizing} = await import('/logcomparator-assets/table_sizing.js'); "
+                          + f'installColumnSizing(getElement({table.id}));')
+
+    ui.context.client.on_connect(install_table_sizing)
+
     table.add_slot('body', '''
         <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @click="props.selected = !props.selected" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
-          <q-td auto-width @click.stop><q-checkbox dense v-model="props.selected" /></q-td>
-          <q-td v-for="col in props.cols" :key="col.name" :props="props"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else>{{ col.value }}</span></q-td>
+          <q-td auto-width @click.stop><q-checkbox dense size="sm" v-model="props.selected" aria-label="Select transaction" /></q-td>
+          <q-td v-for="col in props.cols" :key="col.name" :props="props" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else>{{ col.value }}</span></q-td>
           <q-menu context-menu touch-position><q-list style="min-width:140px">
             <q-item v-for="action in ['Open', 'Export', 'Compare']" :key="action" clickable v-close-popup @click="$parent.$emit('context-action', {uid:props.row.transuid, action:action})"><q-item-section>{{ action }}</q-item-section></q-item>
           </q-list></q-menu>

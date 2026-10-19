@@ -167,7 +167,7 @@ class RemoteMemoryTests(unittest.TestCase):
             def set_keepalive(self, value): pass
             def open_sftp(self): return SFTP()
             def close(self): pass
-        with tempfile.TemporaryDirectory() as folder, patch('remote_logs.connect', return_value=Client()), patch('remote_logs.core.current_log_date', return_value='2026-10-14'), patch('remote_logs._mirror_file', return_value=(True, (1, 1))) as read:
+        with tempfile.TemporaryDirectory() as folder, patch('remote_logs.connect', return_value=Client()), patch('remote_logs.open_sftp', return_value=SFTP()), patch('remote_logs.core.current_log_date', return_value='2026-10-14'), patch('remote_logs._mirror_file', return_value=(True, (1, 1))) as read:
             watcher = RemoteSourceWatcher(settings, '2026-10-14', folder, interval=10, bank='AKTIF/BKT')
             try:
                 self.assertTrue(watcher.changed.wait(3))

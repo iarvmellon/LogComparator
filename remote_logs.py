@@ -14,6 +14,8 @@ import queue
 import shutil
 import errno
 import socket
+import shlex
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -40,6 +42,14 @@ class RemoteConnection:
     fingerprint: str = ''
     log_folder: str = '/opt/tango/MLNPSP01/log'
     allow_keys: bool = False
+    auto_accept_host: bool = False
+    use_sudo: bool = False
+    sudo_password: str = field(default="", repr=False)
+    _accepted_fingerprint: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+
+    @property
+    def effective_fingerprint(self):
+        return self.fingerprint or (self._accepted_fingerprint[0] if self._accepted_fingerprint else '')
 
     def address(self):
         parsed = urlsplit('ssh://' + self.endpoint.strip())
@@ -58,41 +68,56 @@ def uat_connection(endpoint='', username='', password='', *, settings=None, fing
     settings = settings or core.RUNTIME_SETTINGS
     configured_endpoint = f'{core.DEFAULT_HOST}:{core.SSH_PORT}'
     connection = RemoteConnection(endpoint or configured_endpoint,
-                                  username or settings.user, password or settings.sudo_password,
+                                  username or core.DEFAULT_USER, password or settings.sudo_password,
                                   audit_folder=core.REMOTE_AUDIT_DIR, log_folder=core.REMOTE_LOG_DIR,
-                                  fingerprint=fingerprint, allow_keys=not bool(password))
+                                  fingerprint=fingerprint, allow_keys=not bool(password), auto_accept_host=True,
+                                  use_sudo=True, sudo_password=settings.sudo_password)
     if not password:
-        configured = RemoteConnection(configured_endpoint, settings.user, '')
-        if connection.address() != configured.address() or connection.username.strip() != settings.user.strip():
+        configured = RemoteConnection(configured_endpoint, core.DEFAULT_USER, '')
+        if connection.address() != configured.address() or connection.username.strip() != core.DEFAULT_USER.strip():
             raise ValueError('Enter an explicit password for a different host, port or username.')
     return connection
 
 
 class PinnedHostKey(paramiko.MissingHostKeyPolicy):
-    def __init__(self, expected):
+    def __init__(self, expected, on_first_seen=None):
         self.expected = expected
+        self.on_first_seen = on_first_seen
 
     def missing_host_key(self, client, hostname, key):
         fingerprint = 'SHA256:' + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip('=')
         if not self.expected:
-            raise UnknownHostKey(fingerprint)
+            if self.on_first_seen is None:
+                raise UnknownHostKey(fingerprint)
+            self.on_first_seen(fingerprint)
+            self.expected = fingerprint
         if fingerprint != self.expected:
             raise ValueError('Remote host key changed; reconnect and verify the new host fingerprint.')
 
 
 def connect(settings):
     host, port = settings.address()
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(PinnedHostKey(settings.fingerprint))
-    try:
-        client.connect(host, port=port, username=settings.username.strip(), password=settings.password,
-                       allow_agent=settings.allow_keys, look_for_keys=settings.allow_keys, timeout=30,
-                       banner_timeout=60, auth_timeout=60, channel_timeout=60)
-        client.get_transport().set_keepalive(15)
-        return client
-    except Exception:
-        client.close()
-        raise
+    # Retry a stalled TCP opening once; never repeat authentication or sudo here.
+    for tcp_attempt in range(2):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(PinnedHostKey(
+            settings.effective_fingerprint,
+            settings._accepted_fingerprint.append if settings.auto_accept_host else None))
+        try:
+            client.connect(host, port=port, username=settings.username.strip(), password=settings.password,
+                           allow_agent=settings.allow_keys, look_for_keys=settings.allow_keys, timeout=10,
+                           banner_timeout=60, auth_timeout=60, channel_timeout=60)
+            client.get_transport().set_keepalive(15)
+            return client
+        except Exception as error:
+            before_ssh = client.get_transport() is None
+            client.close()
+            if isinstance(error, TimeoutError) and before_ssh:
+                if tcp_attempt == 0:
+                    time.sleep(0.2)
+                    continue
+                raise TimeoutError(f'TCP connection to {host}:{port} timed out before SSH login; sudo has not started.') from error
+            raise
 
 
 def is_transient_ssh_error(error):
@@ -109,15 +134,62 @@ def is_transient_ssh_error(error):
                 errno.EPIPE, getattr(socket, 'EAI_AGAIN', -3)})
 
 
-def open_sftp(client):
-    """Bound subsystem startup too, before an SFTP client exists to set timeouts."""
+SUDO_PROMPT = b'__LOGCOMPARATOR_SUDO_PASSWORD__'
+SFTP_READY = b'__LOGCOMPARATOR_SFTP_READY__\n'
+
+
+def _start_sudo_sftp(channel, password):
+    """Authenticate sudo only when prompted, before starting the binary protocol."""
+    script = '''server=""
+for candidate in /usr/libexec/openssh/sftp-server /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server; do
+    if [ -x "$candidate" ]; then server="$candidate"; break; fi
+done
+if [ -z "$server" ]; then
+    server=$(command -v sftp-server) || { printf 'SFTP server executable not found\\n' >&2; exit 127; }
+fi
+printf '__LOGCOMPARATOR_SFTP_READY__\\n'
+exec "$server"'''
+    command = 'sudo -S -p ' + shlex.quote(SUDO_PROMPT.decode()) + ' -- sh -c ' + shlex.quote(script)
+    channel.exec_command(command)
+    output, errors = b'', b''
+    password_sent = False
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if channel.recv_stderr_ready():
+            errors += channel.recv_stderr(4096)
+            if SUDO_PROMPT in errors:
+                if password_sent or not password:
+                    raise PermissionError('sudo authentication failed for the remote log folders.')
+                if '\n' in password or '\r' in password:
+                    raise ValueError('The sudo password must not contain a newline.')
+                channel.sendall((password + '\n').encode())
+                password_sent = True
+                errors = errors.replace(SUDO_PROMPT, b'')
+        if channel.recv_ready():
+            output += channel.recv(4096)
+            if output.endswith(SFTP_READY):
+                return
+            if len(output) > 4096:
+                raise OSError('Unexpected output before elevated SFTP startup.')
+        if channel.closed or channel.exit_status_ready():
+            detail = errors.replace(SUDO_PROMPT, b'').decode('utf-8', errors='replace').strip()
+            raise PermissionError('Could not start sudo SFTP' + (': ' + detail if detail else '.'))
+        time.sleep(0.01)
+    raise TimeoutError('Timed out waiting for sudo SFTP startup after SSH login.')
+
+
+def open_sftp(client, settings=None):
+    """Start SFTP after SSH login; UAT reads use a sudo-elevated server."""
     channel = client.get_transport().open_session(timeout=60)
     channel.settimeout(60)
     deadline = threading.Timer(60, channel.close)
     deadline.daemon = True
     deadline.start()
     try:
-        channel.invoke_subsystem('sftp')
+        if settings is not None and settings.use_sudo:
+            _start_sudo_sftp(channel, settings.sudo_password)
+        else:
+            channel.invoke_subsystem('sftp')
         return paramiko.SFTPClient(channel)
     except Exception:
         channel.close()
@@ -159,7 +231,7 @@ class RemoteImportRequest:
 
 def list_remote_sources(settings):
     """Read the same log/audit directories as a local import, over SSH/SFTP."""
-    with connect(settings) as client, open_sftp(client) as sftp:
+    with connect(settings) as client, open_sftp(client, settings) as sftp:
         sftp.get_channel().settimeout(60)
         audits = sorted(entry.filename for entry in sftp.listdir_attr(settings.audit_folder)
                         if stat.S_ISREG(entry.st_mode) and safe_audit_name(entry.filename)
@@ -170,7 +242,7 @@ def list_remote_sources(settings):
 
 
 def list_remote_audits(settings):
-    with connect(settings) as client, client.open_sftp() as sftp:
+    with connect(settings) as client, open_sftp(client, settings) as sftp:
         sftp.get_channel().settimeout(30)
         return sorted(entry.filename for entry in sftp.listdir_attr(settings.audit_folder)
                       if stat.S_ISREG(entry.st_mode) and safe_audit_name(entry.filename)
@@ -228,7 +300,7 @@ def read_remote_files(settings, names, target, progress=None, cancel_event=None,
     validator = safe_log_name if log_files else safe_audit_name
     if any(not validator(name) for name in names):
         raise ValueError('Invalid remote source filename.')
-    with connect(settings) as client, client.open_sftp() as sftp:
+    with connect(settings) as client, open_sftp(client, settings) as sftp:
         sftp.get_channel().settimeout(30)
         for index, name in enumerate(names):
             if cancel_event and cancel_event.is_set():
@@ -409,7 +481,7 @@ class RemoteSourceWatcher:
                     if self.stop_event.is_set():
                         return
                     client.get_transport().set_keepalive(15)
-                    with client.open_sftp() as sftp:
+                    with open_sftp(client, self.settings) as sftp:
                         sftp.get_channel().settimeout(15)
                         while not self.stop_event.is_set() and self.selected_date == core.current_log_date():
                             for root, validator, date_of in (

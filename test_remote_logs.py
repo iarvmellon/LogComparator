@@ -34,6 +34,76 @@ class RemoteLogsTests(unittest.TestCase):
             open_sftp(client)
         channel.close.assert_called_once()
 
+    def test_sudo_starts_after_ssh_without_exposing_password_in_command(self):
+        from remote_logs import SUDO_PROMPT, SFTP_READY
+        for needs_password in (False, True):
+            channel = Mock()
+            channel.closed = False
+            channel.exit_status_ready.return_value = False
+            prompted = False
+            sent = False
+            ready = False
+
+            def stderr_ready():
+                return needs_password and not prompted
+
+            def read_stderr(size):
+                nonlocal prompted
+                prompted = True
+                return SUDO_PROMPT
+
+            def send(data):
+                nonlocal sent
+                self.assertTrue(prompted)
+                self.assertEqual(data, b'test-sudo-secret\n')
+                sent = True
+
+            def read_ready():
+                return not ready and (not needs_password or sent)
+
+            def read(size):
+                nonlocal ready
+                ready = True
+                return SFTP_READY
+
+            channel.recv_stderr_ready.side_effect = stderr_ready
+            channel.recv_stderr.side_effect = read_stderr
+            channel.sendall.side_effect = send
+            channel.recv_ready.side_effect = read_ready
+            channel.recv.side_effect = read
+            client = Mock()
+            client.get_transport.return_value.open_session.return_value = channel
+            settings = RemoteConnection('localhost', 'j.arvanitis', '', use_sudo=True, sudo_password='test-sudo-secret')
+            with patch('remote_logs.paramiko.SFTPClient') as sftp:
+                self.assertIs(open_sftp(client, settings), sftp.return_value)
+            command = channel.exec_command.call_args.args[0]
+            self.assertIn('sudo -S', command)
+            self.assertNotIn('test-sudo-secret', command)
+            channel.invoke_subsystem.assert_not_called()
+            self.assertEqual(channel.sendall.call_count, int(needs_password))
+            self.assertNotIn('test-sudo-secret', repr(settings))
+
+    def test_tcp_timeout_identifies_failure_before_login_and_sudo(self):
+        settings = RemoteConnection('localhost', 'j.arvanitis', '', use_sudo=True)
+        with patch('remote_logs.paramiko.SSHClient') as factory:
+            client = factory.return_value
+            client.connect.side_effect = TimeoutError()
+            client.get_transport.return_value = None
+            with self.assertRaisesRegex(TimeoutError, 'before SSH login; sudo has not started'):
+                connect(settings)
+            self.assertEqual(client.close.call_count, 2)
+
+    def test_tcp_opening_retries_before_authentication(self):
+        first, second = Mock(), Mock()
+        first.connect.side_effect = TimeoutError()
+        first.get_transport.return_value = None
+        with patch('remote_logs.paramiko.SSHClient', side_effect=[first, second]):
+            result = connect(RemoteConnection('localhost', 'j.arvanitis', ''))
+        self.assertIs(result, second)
+        first.close.assert_called_once()
+        self.assertEqual(second.connect.call_args.kwargs['username'], 'j.arvanitis')
+        self.assertEqual(second.connect.call_args.kwargs['timeout'], 10)
+
     def test_retry_only_transient_transport_errors(self):
         import errno
         for error in (TimeoutError('timed out'), EOFError(), ConnectionResetError(),
@@ -54,7 +124,9 @@ class RemoteLogsTests(unittest.TestCase):
         settings = SimpleNamespace(user='old-uat-user', sudo_password='test-old-uat-password')
         configured = uat_connection(settings=settings)
         self.assertEqual(configured.endpoint, f'{core.DEFAULT_HOST}:{core.SSH_PORT}')
-        self.assertEqual(configured.username, settings.user)
+        self.assertEqual(configured.username, core.DEFAULT_USER)
+        self.assertTrue(configured.use_sudo)
+        self.assertEqual(configured.sudo_password, settings.sudo_password)
         self.assertEqual(configured.password, settings.sudo_password)
         self.assertEqual(configured.audit_folder, core.REMOTE_AUDIT_DIR)
         self.assertEqual(configured.log_folder, core.REMOTE_LOG_DIR)
@@ -180,6 +252,12 @@ class RemoteLogsTests(unittest.TestCase):
         thread.start()
         settings = RemoteConnection(f'127.0.0.1:{listener.getsockname()[1]}', 'reader', 'test-secret', '/remote audit', log_folder='/remote log')
         try:
+            automatic = replace(settings, auto_accept_host=True)
+            before = len(transports)
+            self.assertEqual(list_remote_sources(automatic),
+                             ([name, 'audit.PTMS01.20261014.gz'], [log_name]))
+            self.assertEqual(len(transports), before + 1)
+            self.assertEqual(automatic.effective_fingerprint, fingerprint)
             with self.assertRaises(UnknownHostKey) as caught:
                 list_remote_audits(settings)
             self.assertEqual(caught.exception.fingerprint, fingerprint)
