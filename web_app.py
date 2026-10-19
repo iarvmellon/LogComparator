@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 import inspect
 import socket
 import webbrowser
@@ -24,12 +23,12 @@ from nicegui import app, run, ui
 from logcomparator_ui.diff_view import DiffView, register_assets
 
 import log_core as core
-from gui_services import download_uat_sources, list_remote_logs
-from web_services import (BackgroundAudits, COLUMNS, CORE_LOCK, comparison_diff, export_logs,
-                          filter_rows, load_logs, publish_exports, with_settings)
+from web_services import (COLUMNS, comparison_diff, export_logs,
+                          filter_rows, load_logs, publish_exports)
 from web_services import inspect_local_sources, source_signature, SourceWatcher
-from remote_logs import (RemoteConnection, UnknownHostKey, list_remote_audits,
-                         audit_date, banks_for_audits, names_for_bank, download_audits, RemoteAuditJob)
+from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, list_remote_sources,
+                         audit_date, banks_for_audits, names_for_bank, read_remote_files as download_audits, read_remote_logs as download_tango_logs,
+                         RemoteSourceWatcher)
 
 WORKSPACE = tempfile.TemporaryDirectory(prefix='LogComparator-web-')
 PREVIEW_SOURCES = OrderedDict()
@@ -69,6 +68,7 @@ body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 .panel { border:1px solid #aaa; border-radius:0; padding:8px 10px; min-width:0; }
 .panel legend { padding:0 6px; font-size:13px; }
 .toolbar { gap:14px; align-items:center; width:100%; flex-wrap:wrap; }
+.data-time-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; width:100%; }
 .q-field--outlined .q-field__control { border-radius:0; background:white; }
 .q-field--dense .q-field__control, .q-field--dense .q-field__marginal { height:32px; }
 .q-btn { border-radius:0; text-transform:none; }
@@ -92,20 +92,15 @@ body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 '''
 
 
-def download_uat(selected_date: str, bank: str, progress) -> Path:
-    # Share the same parser/cache lock with local loading and exports.
-    with CORE_LOCK:
-        return download_uat_sources(selected_date, bank, core.ACTIVE_RUNTIME_SETTINGS.get().output.parent, progress)
-
-
 @ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
 def index():
     ui.add_css(CSS)
     loaded = None
     source_day = ''
+    source_is_remote = False
+    remote_connection = None
     audit_source_folder = core.LOCAL_AUDIT_DIR
     busy = False
-    ssh_picker = None
     background_job = None
     pending_bank = None
     preview_id = None
@@ -207,7 +202,7 @@ def index():
         if busy or loaded is None:
             return
         if bank.value not in core.available_banks_for_folder(loaded.audit_folder or loaded.folder):
-            if background_job and not background_job.done.is_set():
+            if (background_job and not background_job.done.is_set()) or (source_is_remote and live_enabled.value):
                 pending_bank = bank.value
                 background_status.set_text(f'Waiting for {bank.value} audits to finish downloading...')
                 return
@@ -227,15 +222,22 @@ def index():
     def configure_live():
         nonlocal source_watcher
         stop_watching()
+        live_enabled.enable()
         if live_enabled.value and loaded:
-            source_watcher = SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder)
+            source_watcher = (RemoteSourceWatcher(remote_connection, source_day, loaded.folder) if source_is_remote
+                              else SourceWatcher(loaded.folder, loaded.audit_folder or loaded.folder))
             live_status.set_text('Live — watching source files')
         else:
             live_status.set_text('Live paused' if loaded else 'Load files to start live updates')
 
     async def live_tick():
-        nonlocal last_live_check
+        nonlocal last_live_check, pending_bank
         if busy or loaded is None or not live_enabled.value or source_watcher is None:
+            return
+        if pending_bank:
+            if pending_bank in core.available_banks_for_folder(loaded.audit_folder or loaded.folder):
+                pending_bank = None
+                await load_source()
             return
         # Events drive immediate updates; metadata polling also covers missed
         # notifications on network shares and changes during a failed read.
@@ -245,22 +247,24 @@ def index():
         last_live_check = time.monotonic()
         await load_source(live=True)
         if source_watcher and source_watcher.error:
-            live_status.set_text(f'Filesystem watcher unavailable; checking every 5 s: {source_watcher.error}')
+            live_status.set_text(f'SSH connection interrupted; reconnecting: {source_watcher.error}' if source_is_remote
+                                 else f'Filesystem watcher unavailable; checking every 5 s: {source_watcher.error}')
 
-    async def load_source(remote=False, download_bank=None, live=False, remote_import=None):
+    async def load_source(live=False, remote_import=None, local_import=False):
         if live and (busy or loaded is None or not live_enabled.value):
             return
         async def action():
-            nonlocal loaded, source_day, background_job, pending_bank, preview_id, audit_source_folder, last_source_signature
+            nonlocal loaded, source_day, background_job, pending_bank, preview_id, audit_source_folder, last_source_signature, source_is_remote, remote_connection
             bank_value = bank.value
             date_value = source_day
             folder_value = folder.value or ''
-            audit_for_load = None if remote else audit_source_folder
-            remaining_remote = []
+            audit_for_load = audit_source_folder
             if not bank_value:
                 raise ValueError('Select a bank/acquirer.')
             if remote_import:
-                connection, names, date_value, bank_value = remote_import
+                connection = remote_import.connection
+                names = remote_import.audits
+                date_value, bank_value = remote_import.selected_date, remote_import.bank
                 if background_job:
                     background_job.cancel_event.set()
                     background_job = None
@@ -268,32 +272,14 @@ def index():
                 core.DEFAULT_CACHE.mkdir(parents=True, exist_ok=True)
                 source = Path(tempfile.mkdtemp(prefix='remote-', dir=core.DEFAULT_CACHE))
                 audit_for_load = source
-                foreground = names_for_bank(names, bank_value)
+                foreground = names if remote_import.all_banks else names_for_bank(names, bank_value)
                 if not foreground:
                     raise ValueError('No audit files available for the selected bank.')
                 await run.io_bound(download_audits, connection, foreground, source, progress)
-                remaining_remote = [name for name in names if name not in foreground]
-            elif remote:
-                if not core.ENABLE_SSH:
-                    raise ValueError('SSH/SCP is disabled; use the local filesystem import.')
-                if background_job:
-                    background_job.cancel_event.set()
-                    background_job = None
-                pending_bank = None
-                try:
-                    datetime.strptime(date_value, '%Y-%m-%d')
-                except ValueError:
-                    raise ValueError('Select a valid SSH date before downloading.') from None
-                source = await run.io_bound(with_settings, copy.copy(session_settings), download_uat, date_value, download_bank or bank_value, progress)
-                if download_bank == 'All':
-                    available = core.available_banks_for_folder(source)
-                    if available and bank_value not in available:
-                        bank_value = available[0]
-                        bank.set_value(bank_value)
-                folder.set_value(str(source))
+                await run.io_bound(download_tango_logs, connection, remote_import.logs, source, progress)
             else:
                 if not folder_value.strip():
-                    raise ValueError('Enter a log folder or use File > Import local Logs.')
+                    raise ValueError('Enter a log folder or use File > Import local logs.')
                 source = Path(folder_value)
                 if background_job and source.resolve() != background_job.folder:
                     background_job.cancel_event.set()
@@ -308,6 +294,12 @@ def index():
             result = await run.io_bound(load_logs, source, bank_value, date_value, progress,
                                        audit_folder=audit_for_load)
             loaded = result
+            if remote_import:
+                source_is_remote = True
+                remote_connection = connection
+            elif local_import:
+                source_is_remote = False
+                remote_connection = None
             if remote_import:
                 folder.set_value(str(source))
                 bank.set_value(bank_value)
@@ -331,17 +323,11 @@ def index():
             refresh()
             live_status.set_text(f'Updated {datetime.now():%H:%M:%S}')
             if not live:
+                if remote_import:
+                    live_enabled.set_value(True)
                 configure_live()
-            if remote_import and remaining_remote:
-                background_status.set_text('Downloading audits for all banks in background...')
-                background_job = RemoteAuditJob(connection, remaining_remote, result.folder)
-            elif remote_import:
-                background_status.set_text('All available remote audits downloaded.')
-            elif remote and download_bank != 'All':
-                background_status.set_text('Downloading audits for all banks in background...')
-                background_job = BackgroundAudits(result.selected_date, result.folder, copy.copy(session_settings))
-            elif download_bank == 'All':
-                background_status.set_text('All available banks downloaded.')
+            if remote_import:
+                background_status.set_text('SSH live update reads all banks in the background.')
         await perform(action, quiet=live)
 
     def options():
@@ -547,128 +533,123 @@ def index():
                 bank.set_value(import_bank.value)
                 clear_filters()
                 dialog.close()
-                await load_source()
+                await load_source(local_import=True)
             ui.button('Load folder', on_click=choose_path)
             ui.button('Cancel', on_click=dialog.close).props('flat')
         dialog.open()
         if import_paths()[0].is_dir():
             await inspect_folders()
 
-    def remote_import_dialog():
+    async def remote_import_dialog():
         if busy:
             ui.notify('Wait for the current operation to finish.', type='info')
             return
         listed_connection = None
         names = []
-        trusted = {}
+        log_names = []
+        trusted_fingerprint = ''
         pending_key = None
         with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
-            ui.label('Import remote logs').classes('text-lg')
-            host = ui.input('Remote host (IP:port)', placeholder='10.0.0.1:22').props('outlined dense').classes('w-full')
-            username = ui.input('Remote username').props('outlined dense').classes('w-full')
-            password = ui.input('Remote password', password=True, password_toggle_button=True).props('outlined dense autocomplete=new-password').classes('w-full')
-            remote_folder = ui.input('Remote audit folder', value=core.REMOTE_AUDIT_DIR).props('outlined dense').classes('w-full')
+            ui.label('Import remote logs (UAT)').classes('text-lg')
             message = ui.label().classes('text-sm whitespace-pre-wrap')
 
             def connection():
-                return RemoteConnection(host.value or '', username.value or '', password.value or '',
-                                        remote_folder.value or '', trusted.get(host.value, ''))
+                return uat_connection(settings=session_settings, fingerprint=trusted_fingerprint)
 
             def update_banks():
-                available = banks_for_audits([name for name in names if audit_date(name) == remote_day.value])
-                remote_bank.set_options(available)
+                available = banks_for_audits([name for name in names if audit_date(name) == calendar.value])
+                remote_bank.set_options(['All', *available] if available else [])
                 remote_bank.set_value(bank.value if bank.value in available else (available[0] if available else None))
                 import_button.set_enabled(bool(available) and listed_connection is not None)
 
             async def inspect_remote():
-                nonlocal listed_connection, names, pending_key
+                nonlocal listed_connection, names, log_names, pending_key
                 listed_connection = None
                 names = []
+                log_names = []
                 import_button.disable()
-                connect_button.disable()
                 trust_button.set_visibility(False)
                 message.set_text('Connecting and listing remote audit files...')
                 try:
                     candidate = connection()
-                    names = await run.io_bound(list_remote_audits, candidate)
+                    names, log_names = await run.io_bound(list_remote_sources, candidate)
+                    if dialog.is_deleted:
+                        return
                     listed_connection = candidate
-                    days = sorted({audit_date(name) for name in names})
-                    remote_day.set_options(days)
-                    remote_day.set_value(source_day if source_day in days else (days[-1] if days else None))
+                    days = sorted({audit_date(name) for name in names} | {core.parse_log_date(name) for name in log_names})
+                    calendar.props['options'] = [day.replace('-', '/') for day in days]
+                    calendar.props['events'] = calendar.props['options']
+                    calendar.set_enabled(bool(days))
+                    calendar.update()
+                    calendar.set_value(source_day if source_day in days else (days[-1] if days else None))
                     update_banks()
-                    message.set_text(f'{len(names)} audit files; {len(days)} dates available.' if days else 'No dated audit files found.')
+                    message.set_text(f'{len(names)} audit files; {len(log_names)} Tango logs; {len(days)} dates available.' if days else 'No dated source files found.')
                 except UnknownHostKey as error:
+                    if dialog.is_deleted:
+                        return
                     pending_key = (candidate, error.fingerprint)
                     message.set_text(f'First connection to {candidate.endpoint}. Verify this fingerprint with the remote host administrator:\n{error.fingerprint}')
                     trust_button.set_visibility(True)
                 except Exception as error:
-                    message.set_text(f'Could not list remote audits: {error}')
-                finally:
-                    connect_button.enable()
+                    if not dialog.is_deleted:
+                        message.set_text(f'Could not list remote audits: {error}. Close and reopen this dialog to retry.')
 
             async def trust_host():
+                nonlocal trusted_fingerprint
                 if pending_key is None or connection() != pending_key[0]:
-                    message.set_text('Connection fields changed. Connect again to verify the host.')
+                    message.set_text('Reconnect to verify the configured UAT host.')
                     return
-                trusted[host.value] = pending_key[1]
+                trusted_fingerprint = pending_key[1]
                 await inspect_remote()
-
-            def invalidate():
-                nonlocal listed_connection
-                listed_connection = None
-                import_button.disable()
-                trust_button.set_visibility(False)
 
             async def import_remote():
                 if busy:
                     ui.notify('Wait for the current operation to finish.', type='info')
                     return
                 if listed_connection is None or connection() != listed_connection:
-                    message.set_text('Connect again after changing connection fields.')
+                    message.set_text('Connect and list UAT logs before downloading.')
                     return
-                selected_names = [name for name in names if audit_date(name) == remote_day.value]
+                selected_names = [name for name in names if audit_date(name) == calendar.value]
                 if not remote_bank.value or not selected_names:
                     message.set_text('Select an available date and bank.')
                     return
-                request = (listed_connection, selected_names, remote_day.value, remote_bank.value)
-                password.set_value('')
+                available = banks_for_audits(selected_names)
+                all_banks = remote_bank.value == 'All'
+                selected_bank = (bank.value if bank.value in available else available[0]) if all_banks else remote_bank.value
+                request = RemoteImportRequest(listed_connection, selected_names,
+                                              [name for name in log_names if core.parse_log_date(name) == calendar.value],
+                                              calendar.value, selected_bank, all_banks)
                 clear_filters()
                 dialog.close()
                 dialog.delete()
                 await load_source(remote_import=request)
 
-            connect_button = ui.button('Connect and list audits', on_click=inspect_remote)
             trust_button = ui.button('Trust this host fingerprint and connect', on_click=trust_host).props('outline')
             trust_button.set_visibility(False)
-            remote_day = ui.select([], label='Remote log date', on_change=update_banks).props('outlined dense').classes('w-full')
+            calendar = ui.date(on_change=update_banks).mark('remote-import-calendar')
+            calendar.props['options'] = []
+            calendar.props['events'] = []
+            calendar.props['event-color'] = 'green'
+            calendar.disable()
             remote_bank = ui.select([], label='Remote Bank/Acquirer').props('outlined dense').classes('w-full')
-            ui.label('SCP downloads a snapshot of the audit files. Live update watches the downloaded cache.').classes('text-sm')
+            ui.label('SSH reads live logs. New data and files for the selected date are read automatically.').classes('text-sm')
             with ui.row():
-                import_button = ui.button('Download remote logs', on_click=import_remote)
+                import_button = ui.button('Read remote logs', on_click=import_remote)
                 import_button.disable()
                 ui.button('Cancel', on_click=dialog.delete).props('flat')
-            for control in (host, username, password, remote_folder):
-                control.on_value_change(invalidate)
         dialog.open()
+        await inspect_remote()
 
     def settings_dialog():
         with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
             ui.label('Settings').classes('text-lg')
             output_input = ui.input('Output folder', value=str(session_settings.output)).props('outlined dense').classes('w-full')
             ui.button('Browse output folder', on_click=lambda: browse_folder(output_input.value, output_input.set_value)).props('outline dense')
-            user_input = password_input = None
-            if core.ENABLE_SSH:
-                user_input = ui.input('SSH user', value=session_settings.user).props('outlined dense').classes('w-full')
-                password_input = ui.input('Sudo password (leave empty to keep current)', password=True).props('outlined dense').classes('w-full')
             def save():
-                if not (output_input.value or '').strip() or (user_input is not None and not (user_input.value or '').strip()):
+                if not (output_input.value or '').strip():
                     ui.notify('Fill in the required settings.', type='warning')
                     return
                 session_settings.output = Path(output_input.value).expanduser().resolve()
-                if user_input is not None:
-                    session_settings.user = user_input.value.strip()
-                if password_input is not None and password_input.value:
-                    session_settings.sudo_password = password_input.value
                 update_preview_options()
                 status.set_text(f'Settings updated. Output folder: {session_settings.output}')
                 dialog.close()
@@ -688,11 +669,14 @@ def index():
         dialog.open()
 
     def close_workspace():
-        nonlocal loaded, background_job, pending_bank, preview_id, source_day, audit_source_folder
+        nonlocal loaded, background_job, pending_bank, preview_id, source_day, audit_source_folder, source_is_remote, remote_connection
         if background_job:
             background_job.cancel_event.set()
         loaded = background_job = pending_bank = preview_id = None
         source_day = ''
+        source_is_remote = False
+        remote_connection = None
+        live_enabled.enable()
         table.rows = []
         stop_watching()
         live_status.set_text('')
@@ -719,115 +703,13 @@ def index():
             ui.button('Close', on_click=dialog.close)
         dialog.open()
 
-    async def ssh_dialog():
-        nonlocal ssh_picker
-        if busy:
-            ui.notify('Wait for the current operation to finish.', type='info')
-            return
-        if ssh_picker is not None:
-            ssh_picker.delete()
-        available = {}
-        ready = False
-        with ui.dialog() as dialog, ui.card():
-            ui.label('SSH/SCP (UAT) — Select date and bank').classes('text-lg')
-            availability = ui.label('Loading available dates from UAT…').classes('text-sm')
-            files = ui.label().classes('text-sm whitespace-pre-wrap max-w-[600px]')
-
-            def show_files():
-                paths = available.get(remote_date.value, [])
-                files.set_text('Files on UAT:\n' + '\n'.join(core.any_path_name(path) for path in paths) if paths else '')
-
-            remote_date = ui.input('SSH date', value=source_day or date.today().isoformat(), on_change=show_files).props('outlined dense type=date readonly')
-            calendar = ui.date(value=remote_date.value).bind_value(remote_date)
-            calendar.props['options'] = []
-            calendar.disable()
-            date_list = ui.select([], label='Available dates').props('outlined dense').classes('w-full').bind_value(remote_date)
-            date_list.disable()
-            remote_bank = ui.select(['All'] + list(core.BANK_AUDIT_CODES), label='SSH Bank/Acquirer', value=bank.value).props('outlined dense').classes('w-full')
-
-            async def confirm():
-                nonlocal source_day
-                try:
-                    datetime.strptime(remote_date.value or '', '%Y-%m-%d')
-                except ValueError:
-                    ui.notify('Select a valid SSH date before downloading.', type='warning')
-                    return
-                if not ready or remote_date.value not in available:
-                    ui.notify('No Tango log files are available for this date.', type='warning')
-                    return
-                if remote_bank.value != 'All' and remote_bank.value not in core.BANK_AUDIT_CODES:
-                    ui.notify('Select a bank/acquirer.', type='warning')
-                    return
-                source_day = remote_date.value
-                if remote_bank.value != 'All':
-                    bank.set_value(remote_bank.value)
-                dialog.close()
-                clear_filters()
-                await load_source(remote=True, download_bank=remote_bank.value)
-
-            with ui.row():
-                download_button = ui.button('Download and load', on_click=confirm)
-                download_button.disable()
-                retry_button = ui.button('Refresh dates', on_click=lambda: refresh_dates()).props('flat')
-                ui.button('Cancel', on_click=dialog.close).props('flat')
-
-            async def refresh_dates():
-                nonlocal ready
-                ready = False
-                download_button.disable()
-                calendar.disable()
-                date_list.disable()
-                retry_button.disable()
-                availability.set_text('Loading available dates from UAT…')
-                files.set_text('')
-                try:
-                    paths = await run.io_bound(with_settings, copy.copy(session_settings), list_remote_logs)
-                    if dialog.is_deleted or ssh_picker is not dialog:
-                        return
-                    available.clear()
-                    for path in paths:
-                        day = core.parse_log_date(core.any_path_name(path))
-                        if day:
-                            available.setdefault(day, []).append(path)
-                    days = sorted(available)
-                    marked_days = [day.replace('-', '/') for day in days]
-                    calendar.props['options'] = marked_days
-                    calendar.props['events'] = marked_days
-                    calendar.props['event-color'] = 'green'
-                    date_list.set_options(days)
-                    if not days:
-                        availability.set_text('No dated Tango log files found on UAT. Use Refresh dates to check again.')
-                        remote_date.set_value('')
-                    else:
-                        selected = remote_date.value if remote_date.value in available else days[-1]
-                        remote_date.set_value(selected)
-                        calendar.props['default-year-month'] = selected[:7].replace('-', '/')
-                        calendar.enable()
-                        date_list.enable()
-                        ready = True
-                        download_button.enable()
-                        availability.set_text(f'{len(days)} available dates. Green dots mark existing logs; other dates are disabled.')
-                    calendar.update()
-                    show_files()
-                except Exception as error:
-                    if not dialog.is_deleted:
-                        availability.set_text(f'Could not list UAT logs: {error}. Use Refresh dates to retry.')
-                finally:
-                    if not dialog.is_deleted:
-                        retry_button.enable()
-        ssh_picker = dialog
-        dialog.open()
-        await refresh_dates()
-
     with ui.row().classes('menubar'):
         for label in ('File', 'Edit', 'View', 'Tools', 'Help'):
             with ui.button(label).props('flat dense'):
                 with ui.menu():
                     if label == 'File':
-                        ui.menu_item('Import local Logs', on_click=import_dialog).mark('import-menu')
-                        ui.menu_item('Import remote logs', on_click=remote_import_dialog).mark('remote-import-menu')
-                        if core.ENABLE_SSH:
-                            ui.menu_item('SSH/SCP (UAT)', on_click=ssh_dialog).mark('ssh-menu')
+                        ui.menu_item('Import local logs', on_click=import_dialog).mark('import-menu')
+                        ui.menu_item('Import remote logs (UAT)', on_click=remote_import_dialog).mark('remote-import-menu')
                         ui.menu_item('Open', on_click=lambda: export_action('open'))
                         ui.menu_item('Export', on_click=export_action)
                         ui.menu_item('Settings', on_click=settings_dialog).mark('settings-menu')
@@ -899,9 +781,9 @@ def index():
             ui.button(icon='event').props('flat dense round').on('click.stop', open_picker).mark(f'{label}-picker')
         return control
 
-    with ui.row().classes('toolbar items-start'):
+    with ui.element('div').classes('data-time-row'):
         with panel('Data').classes('grow'), ui.row().classes('items-center gap-3'):
-            folder = ui.input('Log folder', value='' if core.ENABLE_SSH else str(core.DEFAULT_IMPORT), placeholder=str(core.DEFAULT_IMPORT)).props('outlined dense readonly').classes('w-80 grow')
+            folder = ui.input('Log folder', value=str(core.DEFAULT_IMPORT) if core.LOCAL_AUDIT_DIR else '', placeholder=str(core.DEFAULT_IMPORT)).props('outlined dense readonly').classes('w-80 grow')
             audit_path = ui.input('Audit folder', value=str(core.LOCAL_AUDIT_DIR or '')).props('outlined dense readonly').classes('w-80 grow')
             bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-48')
             live_enabled = ui.checkbox('Live update', value=False, on_change=configure_live).props('dense').mark('live-update')
@@ -912,11 +794,11 @@ def index():
             timezone = ui.select([f'UTC{i:+d}' if i else 'UTC' for i in range(-3, 4)], value='UTC', label='Timezone', on_change=change_timezone).props('outlined dense').classes('w-28')
 
     with panel('Filters').classes('w-full'), ui.row().classes('w-full gap-3'):
-        filters['possibleproblem'] = ui.input('Possible problem', on_change=refresh).props('outlined dense debounce=350 clearable').classes('problem-filter').mark('possible-problem-filter')
         for key, label in COLUMNS:
             if key in ('datetime', 'possibleproblem'):
                 continue
             filters[key] = ui.input(label, on_change=refresh).props('outlined dense debounce=350').classes('filter-input')
+        filters['possibleproblem'] = ui.input('Possible problem', on_change=refresh).props('outlined dense debounce=350 clearable').classes('problem-filter').mark('possible-problem-filter')
 
     table = ui.table(columns=[dict(name=key, label=label, field=key, align='left', sortable=True) for key, label in COLUMNS],
                      rows=[], row_key='transuid', selection='multiple', pagination=100,
@@ -943,7 +825,7 @@ def index():
         await export_action({'Open': 'open', 'Export': 'download', 'Compare': 'compare'}.get(event.args.get('action'), 'open'))
     table.on('context-action', context_action)
     with ui.row().classes('w-full items-center justify-between'):
-        status = ui.label('Use File > Import local Logs or Import remote logs to load audits.').classes('status')
+        status = ui.label('Use File > Import local logs or Import remote logs (UAT) to load logs.').classes('status')
         ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} · Web').classes('status text-gray-600')
     progress_bar = ui.linear_progress(value=0).classes('w-full')
     background_status = ui.label().classes('status')

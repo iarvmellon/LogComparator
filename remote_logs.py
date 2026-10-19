@@ -1,4 +1,4 @@
-"""Password-authenticated SCP imports, independent of the legacy UAT settings."""
+"""SSH source access and live mirrors, with legacy SCP helpers retained."""
 from __future__ import annotations
 
 import base64
@@ -8,6 +8,7 @@ import stat
 import tempfile
 import threading
 import queue
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,8 @@ class RemoteConnection:
     password: str = field(repr=False)
     audit_folder: str = '/opt/tango/MLNPSP01/audit'
     fingerprint: str = ''
+    log_folder: str = '/opt/tango/MLNPSP01/log'
+    allow_keys: bool = False
 
     def address(self):
         parsed = urlsplit('ssh://' + self.endpoint.strip())
@@ -40,9 +43,24 @@ class RemoteConnection:
         port = 22 if parsed.port is None else parsed.port
         if not 1 <= port <= 65535 or not self.username.strip():
             raise ValueError('Enter a valid port and username.')
-        if not self.audit_folder.startswith('/') or '\x00' in self.audit_folder:
-            raise ValueError('Enter an absolute remote audit folder.')
+        if any(not folder.startswith('/') or '\x00' in folder for folder in (self.audit_folder, self.log_folder)):
+            raise ValueError('Remote log and audit folders must be absolute paths.')
         return parsed.hostname, port
+
+
+def uat_connection(endpoint='', username='', password='', *, settings=None, fingerprint=''):
+    """Reuse the existing UAT configuration without putting its password in HTML."""
+    settings = settings or core.RUNTIME_SETTINGS
+    configured_endpoint = f'{core.DEFAULT_HOST}:{core.SSH_PORT}'
+    connection = RemoteConnection(endpoint or configured_endpoint,
+                                  username or settings.user, password or settings.sudo_password,
+                                  audit_folder=core.REMOTE_AUDIT_DIR, log_folder=core.REMOTE_LOG_DIR,
+                                  fingerprint=fingerprint, allow_keys=not bool(password))
+    if not password:
+        configured = RemoteConnection(configured_endpoint, settings.user, '')
+        if connection.address() != configured.address() or connection.username.strip() != settings.user.strip():
+            raise ValueError('Enter an explicit password for a different host, port or username.')
+    return connection
 
 
 class PinnedHostKey(paramiko.MissingHostKeyPolicy):
@@ -63,7 +81,7 @@ def connect(settings):
     client.set_missing_host_key_policy(PinnedHostKey(settings.fingerprint))
     try:
         client.connect(host, port=port, username=settings.username.strip(), password=settings.password,
-                       allow_agent=False, look_for_keys=False, timeout=15,
+                       allow_agent=settings.allow_keys, look_for_keys=settings.allow_keys, timeout=15,
                        banner_timeout=15, auth_timeout=15, channel_timeout=30)
         return client
     except Exception:
@@ -85,6 +103,33 @@ def safe_audit_name(name):
     return (PurePosixPath(name).name == name and '\\' not in name
             and not any(ord(c) < 32 for c in name)
             and name.startswith(('audit.OPN', 'audit.PTMS')))
+
+
+def safe_log_name(name):
+    return (PurePosixPath(name).name == name and '\\' not in name
+            and not any(ord(c) < 32 for c in name) and core.parse_log_date(name) is not None)
+
+
+@dataclass(frozen=True)
+class RemoteImportRequest:
+    connection: RemoteConnection
+    audits: list[str]
+    logs: list[str]
+    selected_date: str
+    bank: str
+    all_banks: bool = False
+
+
+def list_remote_sources(settings):
+    """Read the same log/audit directories as a local import, over SSH/SFTP."""
+    with connect(settings) as client, client.open_sftp() as sftp:
+        sftp.get_channel().settimeout(30)
+        audits = sorted(entry.filename for entry in sftp.listdir_attr(settings.audit_folder)
+                        if stat.S_ISREG(entry.st_mode) and safe_audit_name(entry.filename)
+                        and audit_date(entry.filename))
+        logs = sorted(entry.filename for entry in sftp.listdir_attr(settings.log_folder)
+                      if stat.S_ISREG(entry.st_mode) and safe_log_name(entry.filename))
+        return audits, logs
 
 
 def list_remote_audits(settings):
@@ -110,12 +155,13 @@ def names_for_bank(names, bank):
     return [name for name in names if name.startswith('audit.PTMS') or bank in banks_for_audits([name])]
 
 
-def download_audits(settings, names, target, progress=None, cancel_event=None):
+def download_audits(settings, names, target, progress=None, cancel_event=None, *, log_files=False):
     """Publish each complete file atomically; never expose partial downloads."""
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
-    if any(not safe_audit_name(name) for name in names):
-        raise ValueError('Invalid remote audit filename.')
+    validator = safe_log_name if log_files else safe_audit_name
+    if any(not validator(name) for name in names):
+        raise ValueError('Invalid remote source filename.')
     with connect(settings) as client, SCPClient(client.get_transport(), socket_timeout=30) as scp:
         for index, name in enumerate(names):
             if cancel_event and cancel_event.is_set():
@@ -124,12 +170,149 @@ def download_audits(settings, names, target, progress=None, cancel_event=None):
                 progress(index, len(names), f'Downloading {name}')
             with tempfile.TemporaryDirectory(prefix='.scp-', dir=target) as staging:
                 staged = Path(staging) / name
-                scp.get(str(PurePosixPath(settings.audit_folder) / name), str(staged))
+                remote_folder = settings.log_folder if log_files else settings.audit_folder
+                scp.get(str(PurePosixPath(remote_folder) / name), str(staged))
                 if cancel_event and cancel_event.is_set():
                     return
                 staged.replace(target / name)
             if progress:
                 progress(index + 1, len(names), f'Downloaded {name}')
+
+
+def download_tango_logs(settings, names, target, progress=None):
+    if names:
+        download_audits(settings, names, target, progress, log_files=True)
+
+
+def read_remote_files(settings, names, target, progress=None, cancel_event=None, *, log_files=False):
+    """Initial SSH/SFTP read; publish only complete, bounded snapshots."""
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    validator = safe_log_name if log_files else safe_audit_name
+    if any(not validator(name) for name in names):
+        raise ValueError('Invalid remote source filename.')
+    with connect(settings) as client, client.open_sftp() as sftp:
+        sftp.get_channel().settimeout(30)
+        for index, name in enumerate(names):
+            if cancel_event and cancel_event.is_set():
+                return
+            if progress:
+                progress(index, len(names), f'Reading {name} over SSH')
+            root = settings.log_folder if log_files else settings.audit_folder
+            _mirror_file(sftp, str(PurePosixPath(root) / name), target / name, cancel_event)
+
+
+def read_remote_logs(settings, names, target, progress=None):
+    if names:
+        read_remote_files(settings, names, target, progress, log_files=True)
+
+
+def _mirror_file(sftp, remote, local, stop=None, previous=None):
+    """Reuse a verified local prefix, reading only appended remote bytes.
+
+    A private staging file prevents the parser from seeing an interrupted read.
+    Head/tail checks also detect replacement or truncation across reconnects.
+    """
+    attrs = sftp.stat(remote)
+    size = attrs.st_size
+    stamp = (size, attrs.st_mtime)
+    with sftp.open(remote, 'rb') as source:
+        old_size = local.stat().st_size if local.exists() else 0
+        prefix_ok = False
+        if local.exists() and old_size <= size:
+            with local.open('rb') as cached:
+                head = cached.read(min(256, old_size))
+                prefix_ok = source.read(len(head)) == head
+                offset = max(0, old_size - 256)
+                cached.seek(offset)
+                source.seek(offset)
+                prefix_ok = prefix_ok and source.read(old_size - offset) == cached.read()
+        if prefix_ok and old_size == size and previous == stamp:
+            return False, stamp
+        # A same-size rewrite with a changed mtime needs a complete refresh.
+        start = old_size if prefix_ok and old_size < size else 0
+        with tempfile.TemporaryDirectory(prefix='.ssh-', dir=local.parent) as staging:
+            staged = Path(staging) / local.name
+            if start:
+                shutil.copyfile(local, staged)
+            with staged.open('ab' if start else 'wb') as output:
+                source.seek(start)
+                remaining = size - start
+                while remaining:
+                    if stop and stop.is_set():
+                        return False, previous
+                    chunk = source.read(min(262144, remaining))
+                    if not chunk:
+                        raise OSError('Remote file changed while reading; retrying')
+                    output.write(chunk)
+                    remaining -= len(chunk)
+            if stop and stop.is_set():
+                return False, previous
+            staged.replace(local)
+    return True, stamp
+
+
+class RemoteSourceWatcher:
+    """Persistent SSH connection, incremental reads and reconnectable discovery."""
+    def __init__(self, settings, selected_date, folder, interval=0.5):
+        self.settings, self.selected_date = settings, selected_date
+        self.folder = Path(folder)
+        self.interval = interval
+        self.changed = threading.Event()
+        self.stop_event = threading.Event()
+        self.error = None
+        self.client = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        stamps = {}
+        while not self.stop_event.is_set():
+            try:
+                with connect(self.settings) as client:
+                    self.client = client
+                    if self.stop_event.is_set():
+                        return
+                    client.get_transport().set_keepalive(15)
+                    with client.open_sftp() as sftp:
+                        sftp.get_channel().settimeout(15)
+                        while not self.stop_event.is_set():
+                            for root, validator, date_of in (
+                                (self.settings.audit_folder, safe_audit_name, audit_date),
+                                (self.settings.log_folder, safe_log_name, core.parse_log_date),
+                            ):
+                                for entry in sftp.listdir_attr(root):
+                                    name = entry.filename
+                                    if not stat.S_ISREG(entry.st_mode) or not validator(name) or date_of(name) != self.selected_date:
+                                        continue
+                                    try:
+                                        changed, stamps[name] = _mirror_file(
+                                            sftp, str(PurePosixPath(root) / name), self.folder / name,
+                                            self.stop_event, stamps.get(name))
+                                    except FileNotFoundError:
+                                        # Rotation can remove a file between listing and open.
+                                        continue
+                                    if changed:
+                                        self.changed.set()
+                                    if self.stop_event.is_set():
+                                        return
+                            # Keep rotated/deleted files in the local history; new names
+                            # are discovered on the next pass without changing the date.
+                            self.error = None
+                            if self.stop_event.wait(self.interval):
+                                return
+            except Exception as error:
+                if not self.stop_event.is_set():
+                    self.error = str(error)
+                    self.changed.set()
+                    self.stop_event.wait(2)
+            finally:
+                self.client = None
+
+    def close(self):
+        self.stop_event.set()
+        if self.client:
+            self.client.close()
 
 
 class RemoteAuditJob:

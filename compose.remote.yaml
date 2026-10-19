@@ -1,0 +1,27 @@
+# Standalone deployment for hosts without the local Tango source directories.
+services:
+  logcomparator:
+    build:
+      context: .
+      args:
+        BUILD_DESCRIBE: ${LOGCOMPARATOR_VERSION:-container}
+        BUILD_GIT_HASH: ${LOGCOMPARATOR_GIT_HASH:-unknown}
+    image: logcomparator:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${LOGCOMPARATOR_PORT:-4020}:8080"
+    environment:
+      LOGCOMPARATOR_LOG_DIR: /data/cache/local/log
+      LOGCOMPARATOR_AUDIT_DIR: /data/cache/local/audit
+      LOGCOMPARATOR_OUTPUT: /data/exports
+      LOGCOMPARATOR_CACHE: /data/cache
+      NICEGUI_STORAGE_PATH: /data/state
+    volumes:
+      - exports:/data/exports
+      - cache:/data/cache
+      - state:/data/state
+volumes:
+  exports:
+  cache:
+  state:

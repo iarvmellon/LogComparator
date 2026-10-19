@@ -5,13 +5,19 @@ PTMS/SPDH and OPN/ISO audit streams. **The NiceGUI / Quasar web interface is now
 the only UI.** The former Tkinter window and its calendar/layout code have been
 removed. Parsing, transaction checks, CLI analysis and export formats are retained.
 
+The **Data** and **Time range** panels share one row. Controls wrap within each
+panel as needed, keeping both panels side by side.
+
 ## Start the application
 
 Open `dist/LogComparator.exe` using the existing Desktop shortcut. It starts the
 web server and opens the browser. The executable remains at the fixed project
 path `dist/LogComparator.exe`; no Python, Node, Tkinter, WinMerge or Notepad++
 installation is needed to use the packaged application. The local diff2html
-JavaScript, CSS and license are included in the executable.
+JavaScript, CSS and license are included in the executable. The Windows build
+uses `--noconsole`: it runs the web server in the background without opening a
+terminal window. Diagnostics are written to
+`%LOCALAPPDATA%\LogComparator\LogComparator.log`.
 
 From source, run from the project root using the project virtual environment:
 
@@ -27,8 +33,10 @@ The server listens on `0.0.0.0:8080`. Locally, use `http://127.0.0.1:8080`;
 other computers can use `http://<server-IP>:8080` if network routing and the
 existing firewall allow the connection. Starting the executable again opens the
 already-running LogComparator server instead of starting a conflicting copy.
-Use `--port 8081` for another port. Keep the server process running; Ctrl+C in its
-console stops the server. **File > Close workspace** closes only that browser
+Use `--port 8081` for another port. Keep the server process running. To stop
+the background Windows executable, end LogComparator in Task Manager. For
+source/terminal runs, Ctrl+C stops the server; use `python main.py` for CLI
+output in a terminal. **File > Close workspace** closes only that browser
 workspace so other users can continue working.
 
 The interface has no login. Users who can reach it can access the server's log
@@ -39,7 +47,7 @@ another user's credentials. Refreshing the page starts a fresh workspace.
 
 ## Workflow and controls
 
-- **File > Import local Logs** opens a server-folder import dialog. Type a path or use
+- **File > Import local logs** opens a server-folder import dialog. Type a path or use
   **Browse folders**, set the separate Audit folder if needed, choose the log
   date and bank/acquirer and press **Load folder**. Available choices load
   automatically when Import opens or source paths change. One date can be selected automatically; multiple
@@ -49,54 +57,59 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   With a configured audit directory (Docker/Linux), the dialog uses the
   configured log/audit directories automatically and shows date/bank choices
   without path fields or folder browse buttons.
-- **File > Import remote logs** imports audit files from a configurable remote
-  server. Enter **Remote host (IP:port)** (port defaults to 22), **Remote
-  username**, **Remote password** and **Remote audit folder**, then choose
-  **Connect and list audits**. The default folder is
-  `/opt/tango/MLNPSP01/audit`; host/user/password start empty. For IPv6 with a
-  port, use `[address]:port`. On the first connection in this dialog, verify the
+- **File > Import remote logs (UAT)** imports Tango logs and audit files from a
+  remote Linux server using SSH/SFTP. Host, port, username, password and source
+  folders use the existing hardcoded UAT configuration; none of these fields
+  are displayed or editable in the browser. Opening the dialog automatically
+  connects and lists the available logs; no separate connection button is needed.
+  The remote folders are `/opt/tango/MLNPSP01/log` and
+  `/opt/tango/MLNPSP01/audit`, matching the local Linux source layout.
+  The historical stored sudo password is used as the SSH password fallback;
+  existing SSH agent/default keys are also tried. On the first connection in
+  this dialog, verify the
   displayed SHA256 host fingerprint and choose **Trust this host fingerprint
   and connect**. That fingerprint is pinned for subsequent listing/download
   connections in the dialog; a changed key is rejected. Choose an available
-  **Remote log date** and **Remote Bank/Acquirer**, then **Download remote logs**.
+  date directly in the calendar (green dots identify available dates), and **Remote Bank/Acquirer**, then **Read remote logs**. **All**
+  downloads all available banks before displaying one bank.
   The requested bank's OPN and shared PTMS audits load first; other banks download
   in the background and become available through the bank combobox.
   If a date contains PTMS/SPDH audits only, the bank selector offers the configured
   banks and the parser applies transaction-level bank filtering after download.
-  Files are downloaded by SCP to a unique folder under the writable source
-  cache, with atomic publication of complete files. Date discovery uses the
-  audit filenames, so remote Tango log files are not required. Tango-only
-  diagnostics are unavailable when the import contains audits only.
-  Passwords are used in memory for the import/background download and are not
-  saved to settings or the image. Reopening the dialog requires entering them
-  again. The remote account must be able to list the folder through SFTP and
-  read the audit files through SCP; no sudo is used. The remote host needs its
-  SCP command and SFTP subsystem available. LogComparator uses Python Paramiko
-  and scp packages, so no SSH/SCP executable or Linux system package needs to
+  Files are read over SSH/SFTP into a private folder under the writable source
+  cache, with atomic publication of bounded file snapshots. Date discovery uses log and
+  audit filenames; the selected date's Tango logs are downloaded too, so the
+  same Tango diagnostics can run as with a local import.
+  The password stays in the server-side UAT configuration; there is no password
+  input, prefilled password value or credential override in the web dialog.
+  The remote account must be able to list both folders through SFTP and
+  read the source files through SFTP; no sudo is used. The remote host needs its
+  SSH service and SFTP subsystem available. LogComparator uses Python Paramiko,
+  so no SSH/SCP executable or Linux system package needs to
   be installed in the LogComparator container. Connections originate from the
   server/container, not the browser PC. The remote files remain unchanged.
-  This is a snapshot import: **Live update** follows the local downloaded cache,
-  not changes on the remote host. Import again for a new remote snapshot.
-- **File > SSH/SCP (UAT)**, when enabled, lists remote Tango log dates. Available dates have
-  green dots; other dates are disabled. The Available dates dropdown and the
-  selected date's filenames show what exists on UAT. Refresh dates reloads the
-  listing. Choose a bank or **All**, then **Download and load**. Listing errors
-  or an empty listing keep downloading disabled. Source date is kept inside
-  this dialog; there is no Source date field or Load/SSH button in Data.
-- A specific requested bank appears first. Other banks' audits for the same date
-  download in the background with a separate status line. Complete files are
-  published atomically and the foreground bank's ready sources are retained.
-  Bank/Acquirer switches to the downloaded local audits without another SSH
-  request; a pending bank loads after the background job finishes. Missing bank
-  audits are reported instead of showing another bank's rows. Selecting All
-  downloads all available banks before loading one. A source change cancels the
-  old background job; background jobs for one folder are serialized.
+  **Live update** starts automatically for remote imports. A persistent SSH/SFTP
+  connection checks the selected date's log/audit folders approximately every
+  500 ms (plus network, file-reading and parsing time). Only appended bytes are
+  read after the initial snapshot, with small prefix checks to detect rotation
+  or truncation. New files for all banks are discovered automatically. Replaced
+  or truncated files are read again; rotated files remain in the local history.
+  Interrupted reads retain the last complete cache. Lost connections reconnect
+  automatically using the confirmed host fingerprint; a changed key is rejected.
+  Disable **Live update** to pause remote reads, or enable it to resume.
+  The date stays fixed across midnight: import the next date explicitly.
+- The requested bank is displayed first. While remote live update is enabled,
+  the SSH reader also loads other banks for the same date into the cache.
+  Bank/Acquirer switches reuse these files. A bank selected before its files
+  arrive loads when they become available. Selecting **All** reads all currently
+  available banks before showing one. Importing another source, closing the
+  workspace or deleting its browser session stops the old SSH reader.
 - **From / To** each combine date and time. Click the field or calendar icon to
   choose a date and a 24-hour clock time, including seconds, then Apply. Cancel
   retains the old range. Bounds include the entire final second. Timezone is
   restricted to UTC-3 through UTC+3. Changing it shifts displayed timestamps and
   range bounds together to retain the selected instants.
-- Enable **Live update** in Data after importing a folder to follow growing
+- Enable **Live update** in Data after a local filesystem import to follow growing
   local logs. Filesystem notifications trigger updates for the selected date and
   bank, reloading only after changes, additions or rotation. Events are grouped
   for about 50–250 ms and checked by the UI every 250 ms; parsing time adds to
@@ -111,8 +124,9 @@ another user's credentials. Refreshing the page starts a fresh workspace.
   files only and does not repeat SSH downloads. Large files may take longer than
   a few seconds to parse; scans never overlap within a workspace. Disabling live
   updates, closing the workspace or deleting the browser session stops its watcher.
+  Remote imports use the SSH/SFTP live reader described above.
 - **Filters** combine case-insensitive substring searches. **Possible problem**
-  is always shown first at a wider size; it searches the displayed combined
+  is always shown last at a wider size; it searches the displayed combined
   ISO/SPDH text, without hidden severity prefixes. Other filters are TransUID,
   STAN, RRN, AuthCode, Sequence_Number, TransactionType, TID, MID, AMT, RC_SPDH
   and RC_ISO. **Edit > Clear filters** resets text filters.
@@ -143,15 +157,16 @@ another user's credentials. Refreshing the page starts a fresh workspace.
 - **Tools > Export options** and the toolbar share protocol selection
   (SPDH+ISO / ISO / SPDH), Include Byte/Data, Tango Internal, Tango to Network
   and Network to Tango. New previews and comparisons use the current options.
-- **File > Settings** changes output folder and, when SSH is enabled, SSH user and sudo password for the
-  current workspace. Browse output folder uses the web folder chooser. Leaving
-  the password field empty keeps the configured password; it is never prefilled
-  into browser HTML. **Help > About** shows the release, Git commit and author.
+- **File > Settings** changes the current workspace's output folder. Browse
+  output folder uses the web folder chooser. Remote credentials are entered
+  separately in **Import remote logs (UAT)**; there are no SSH/sudo fields in Settings. **Help > About** shows the release, Git commit and author.
 
 ## Linux server with Docker
 
-The Docker deployment reads existing server files directly, without SSH/SCP.
-`compose.yaml` mounts these directories read-only:
+Docker/Linux offers exactly two import choices: **Import local logs** reads
+the filesystem directly; **Import remote logs (UAT)** reads the same directory
+layout on the selected remote host through SSH/SFTP. The local mode uses these
+read-only source mounts in `compose.yaml`:
 
 - `/opt/tango/MLNPSP01/log` for Tango logs.
 - `/opt/tango/MLNPSP01/audit` for bank audit files.
@@ -165,14 +180,14 @@ docker compose up -d --build
 docker compose logs -f logcomparator
 ```
 
-Open `http://<server-IP>:4020`. Use **File > Import local Logs** to select an available
+Open `http://<server-IP>:4020`. Use **File > Import local logs** to select an available
 date and bank. Configured server source folders are used automatically; the
 Import dialog omits folder path fields and folder browsing controls when an
 audit directory is configured (as in Docker/Linux). Available dates and banks
 load automatically each time Import opens; there is no inspection button. All local banks remain
-available through Bank/Acquirer. The legacy SSH/SCP (UAT) menu and its Settings
-credential fields are disabled; the separate Import remote logs feature remains
-available with its own connection fields.
+available through Bank/Acquirer. The File menu has only the two import choices
+above; the former SSH/SCP (UAT) and duplicate generic remote import entries have
+been consolidated. Both choices are available in Docker/Linux.
 
 Docker publishes host TCP 4020 to container TCP 8080. The application and
 container continue listening on 8080; only the external port changes. Set
@@ -210,11 +225,30 @@ access. Check server routing/firewall and Docker daemon proxy settings if
 group ID does not affect registry connectivity.
 
 For source runs, `LOGCOMPARATOR_LOG_DIR`, `LOGCOMPARATOR_AUDIT_DIR`,
-`LOGCOMPARATOR_OUTPUT`, `LOGCOMPARATOR_CACHE` and `LOGCOMPARATOR_ENABLE_SSH`
-configure the same paths and behavior. Linux defaults use the two `/opt/tango`
-directories above and disable SSH; Windows retains its existing defaults.
+`LOGCOMPARATOR_OUTPUT` and `LOGCOMPARATOR_CACHE` configure the local paths.
+Linux defaults use the two `/opt/tango` directories above. Remote UAT import is
+available independently of the legacy `LOGCOMPARATOR_ENABLE_SSH` setting.
 
 ### Update through Git and transfer the Docker image
+
+If the machine running Docker does not contain `/opt/tango/MLNPSP01/log` and
+`/opt/tango/MLNPSP01/audit`, the standard Compose file reports
+`bind source path does not exist`. Its mounts refer to the Docker host, not to
+a remote SSH server. Use the standalone remote-import deployment instead:
+
+```bash
+docker compose -f compose.remote.yaml up -d --no-build --pull never
+```
+
+This requires the updated application image containing **Import remote logs (UAT)**.
+To build on a machine with dependency-download access, use
+`docker compose -f compose.remote.yaml up -d --build` instead. The remote Compose
+file mounts only exports/cache/state volumes and needs no local Tango directories.
+It publishes the same external 4020/internal 8080 ports. Enter the actual remote
+the configured UAT connection through **File > Import remote logs (UAT)**. The remote host uses
+the fixed `/opt/tango/MLNPSP01/log` and `/opt/tango/MLNPSP01/audit` folders. Use
+`docker compose -f compose.remote.yaml ...` for subsequent status/log/update
+commands in this deployment mode; do not start both Compose modes together.
 
 Use this procedure when Windows can build the image but the Linux server cannot
 download Docker/Python dependencies. Run all commands from the project directory.
@@ -325,8 +359,8 @@ and restarting an existing image does not change its version metadata.
 | Former UI function | Web equivalent |
 | --- | --- |
 | Native window and date dialogs | Browser page and Quasar calendar/time pickers |
-| Native folder chooser | File > Import local Logs > Browse folders |
-| SSH date/bank selection, including All | File > SSH/SCP (UAT) |
+| Native folder chooser | File > Import local logs > Browse folders |
+| SSH date/bank selection, including All | File > Import remote logs (UAT) |
 | Background download for other banks | Background worker and bank combobox |
 | Table filters, columns, sorting, selection, colors | Quasar QTable and filter bar |
 | Open in Notepad++ / double-click | Specific transaction in a new browser tab |
@@ -341,15 +375,16 @@ and restarting an existing image does not change its version metadata.
 For source/development use, install Python 3.10+ and Git for Windows. Run
 `setup.ps1` to create/reuse `.venv`, install application/build dependencies and
 register the project's PyInstaller asset hook. `requirements-web.txt` remains a
-compatibility alias for `requirements.txt`. OpenSSH `ssh` and `scp` on PATH,
-network access to UAT and permission for the existing sudo commands are required
-only for UAT operations. No Linux packages are required.
+compatibility alias for `requirements.txt`. The web remote import uses the
+Python Paramiko/scp dependencies and requires network access to the remote SSH
+port and read permission on both remote source directories. No local OpenSSH
+executable or Linux system package installation is required.
 
 Build from the project root with the project virtual environment:
 
 ```powershell
 .\.venv\Scripts\python.exe update_build_info.py
-.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build_info.json;." main.py
+.\.venv\Scripts\pyinstaller.exe --onefile --noconsole --name LogComparator --add-data "build_info.json;." main.py
 ```
 
 The locally installed `logcomparator-web-ui` package supplies a PyInstaller hook
@@ -373,7 +408,8 @@ Python tests use synthetic source files and mocked SSH calls. They cover loading
 combined diagnostics, time and text filtering, settings isolation, background
 publication, specific-transaction previews, comparison, export and bank switching.
 Remote tests use a loopback SSH/SFTP/SCP server to verify password authentication,
-fingerprint checks, discovery, real SCP downloads, atomic failure handling and
+fingerprint checks, discovery, SSH/SFTP live appends, truncation, new files,
+reconnection, legacy SCP downloads, atomic failure handling and
 background transfers without accessing a production host.
 The NiceGUI simulated-user test runs under pytest and is skipped by unittest.
 The Node development test checks the actual vendored diff2html renderer, escaping
@@ -382,13 +418,12 @@ of log text and synchronized scrolling; Node is not needed by the server or EXE.
 ## Configuration and source cache
 
 Constants and protocol/bank mappings are in `log_config.py`; parsing and export
-are in `log_core.py`. SSH defaults are used unless overridden in the workspace's
-Settings dialog. Do not expose repository credentials outside the intended team.
+are in `log_core.py`. Remote UAT host/user/password use the existing server-side configuration;
+Settings controls only the output folder.
 The Windows default output folder is `C:\Users\j.arvanitis\Desktop\Tango\LogComparator\Logs`;
 the Docker/Linux default is `/data/exports`.
-UAT sources are stored under `LogComparator/<YYYY-MM-DD>_UAT/<BANK>` or `All`.
-Past-date source files already present are reused; today's requested source files
-are refreshed. Local imports are parsed from their selected folder. Parsed-list
+Remote UAT imports are stored in private `remote-*` source-cache folders. Each
+new remote import starts a fresh SSH/SFTP cache; bank switches reuse its live cache. Local imports are parsed from their selected folder. Parsed-list
 caching is bounded and keyed by source path, modification time and size; source
 changes invalidate it. Blocking work runs outside the web event loop and shared
 parser caches are serialized. Download/preview variants use private temporary
@@ -603,7 +638,7 @@ After every change, rebuild the executable from the project root with:
 
 ```powershell
 .\.venv\Scripts\python.exe update_build_info.py
-.\.venv\Scripts\pyinstaller.exe --onefile --name LogComparator --add-data "build_info.json;." main.py
+.\.venv\Scripts\pyinstaller.exe --onefile --noconsole --name LogComparator --add-data "build_info.json;." main.py
 ```
 
 The latest executable must always be stored inside the project at

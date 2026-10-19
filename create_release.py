@@ -85,7 +85,7 @@ def create_release():
 def build_executable():
     builder = ROOT / '.venv' / 'Scripts' / 'pyinstaller.exe'
     result = subprocess.run(
-        [str(builder), '--onefile', '--name', 'LogComparator',
+        [str(builder), '--onefile', '--noconsole', '--name', 'LogComparator',
          '--add-data', 'build_info.json;.', 'main.py'], cwd=ROOT)
     if result.returncode:
         raise RuntimeError('Executable build failed. The release tag remains published; rerun create_release.py to retry.')

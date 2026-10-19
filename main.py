@@ -4,6 +4,10 @@ import argparse
 import multiprocessing
 from pathlib import Path
 
+from windows_runtime import configure_standard_streams
+
+configure_standard_streams()
+
 from log_core import DEFAULT_OUTPUT, PROTOCOL_CHOICES, split_audit_files
 
 

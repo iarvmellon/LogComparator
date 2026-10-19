@@ -149,6 +149,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             try:
                 await user.open('/')
                 await user.should_not_see(marker='ssh-menu')
+                await user.should_see('Import local logs')
+                await user.should_see('Import remote logs (UAT)')
                 user.find(marker='import-menu').click()
                 await user.should_see('Import local log folder', retries=100)
                 await user.should_not_see('Choose a folder on the computer running LogComparator.')
@@ -212,33 +214,73 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 fixture.mkdir()
                 source_fixture(fixture)
                 remote_name = 'audit.OPNBISOBKT01.2026-10-14'
-                listing = Mock(side_effect=[UnknownHostKey('SHA256:test-host'), [remote_name]])
+                listing = Mock(side_effect=[UnknownHostKey('SHA256:test-host'), ([remote_name], ['tango.log.2026-10-14'])])
 
                 def copy_remote(connection, names, target, progress):
-                    self.assertEqual(connection.endpoint, '127.0.0.1:2222')
-                    self.assertEqual(connection.password, 'test-password')
+                    import log_core as core
+                    self.assertEqual(connection.endpoint, f'{core.DEFAULT_HOST}:{core.SSH_PORT}')
+                    self.assertEqual(connection.username, core.RUNTIME_SETTINGS.user)
+                    self.assertTrue(connection.password == core.RUNTIME_SETTINGS.sudo_password)
                     for name in names:
                         shutil.copyfile(fixture / name, target / name)
 
                 transfer = Mock(side_effect=copy_remote)
-                with patch.dict(live_timer.callback.__globals__, list_remote_audits=listing, download_audits=transfer):
+                log_transfer = Mock(side_effect=copy_remote)
+                with patch.dict(live_timer.callback.__globals__, list_remote_sources=listing, download_audits=transfer, download_tango_logs=log_transfer, RemoteSourceWatcher=Mock(return_value=Mock(changed=__import__('threading').Event(), error=None))):
                     user.find(marker='remote-import-menu').click()
-                    await user.should_see('Import remote logs')
+                    await user.should_see('Import remote logs (UAT)')
                     remote_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
-                    with user:
-                        remote_inputs['Remote host (IP:port)'].set_value('127.0.0.1:2222')
-                        remote_inputs['Remote username'].set_value('reader')
-                        remote_inputs['Remote password'].set_value('test-password')
-                    user.find('Connect and list audits').click()
+                    import log_core as core
+                    for label in ('Remote host (IP:port)', 'Remote username', 'Remote password'):
+                        self.assertNotIn(label, remote_inputs)
+                    self.assertFalse(any(e.text == 'Connect and list logs' for e in user.find(ui.button).elements))
                     await user.should_see('SHA256:test-host', retries=100)
                     user.find('Trust this host fingerprint and connect').click()
-                    await user.should_see('1 audit files; 1 dates available.', retries=100)
+                    await user.should_see('1 audit files; 1 Tango logs; 1 dates available.', retries=100)
                     self.assertEqual(listing.call_args.args[0].fingerprint, 'SHA256:test-host')
-                    user.find('Download remote logs').click()
+                    self.assertEqual(listing.call_args.args[0].audit_folder, '/opt/tango/MLNPSP01/audit')
+                    self.assertEqual(listing.call_args.args[0].log_folder, '/opt/tango/MLNPSP01/log')
+                    calendar = next(iter(user.find(marker='remote-import-calendar').elements))
+                    self.assertEqual(calendar.props['events'], ['2026/10/14'])
+                    self.assertEqual(calendar.props['options'], calendar.props['events'])
+                    remote_bank = next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Remote Bank/Acquirer')
+                    with user:
+                        remote_bank.set_value('All')
+                    user.find('Read remote logs').click()
                     await user.should_see('Loaded transactions: 2', retries=100)
                     transfer.assert_called_once()
+                    log_transfer.assert_called_once()
+                    self.assertEqual(log_transfer.call_args.args[1], ['tango.log.2026-10-14'])
                     self.assertEqual(len(table.rows), 2)
-                    self.assertEqual(remote_inputs['Remote password'].value, '')
+                    live_control = next(iter(user.find(marker='live-update').elements))
+                    self.assertTrue(live_control.enabled)
+                    self.assertTrue(live_control.value)
+                    await user.should_see('SSH live update reads all banks')
+                    with user:
+                        await live_timer.callback()
+                    self.assertEqual(len(table.rows), 2)
+                    cache_folder = Path(transfer.call_args.args[2])
+                    with (cache_folder / remote_name).open('a') as stream:
+                        stream.write(addition)
+                    with user:
+                        table.selected = [table.rows[0]]
+                        inputs['From'].set_value('2026-10-14 06:00:00')
+                        inputs['TransactionType'].set_value('LOGON')
+                        live_timer.callback.__globals__['RemoteSourceWatcher'].return_value.changed.set()
+                        await live_timer.callback()
+                    self.assertEqual(len(table.rows), 4)
+                    self.assertEqual(len(table.selected), 1)
+                    self.assertEqual(inputs['From'].value, '2026-10-14 06:00:00')
+                    self.assertEqual(inputs['TransactionType'].value, 'LOGON')
+                    with user:
+                        next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer').set_value('AKTIF/BKTKOS')
+                    await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
+                    self.assertTrue(live_control.enabled)
+                    user.find(marker='import-menu').click()
+                    await user.should_see('Import local log folder')
+                    user.find('Load folder').click()
+                    await user.should_see('Loaded transactions: 4', retries=100)
+                    self.assertTrue(live_control.enabled)
             finally:
                 await simulation.__aexit__(None, None, None)
 
@@ -252,16 +294,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             source_fixture(folder)
-            remote_patch = patch('gui_services.download_uat_sources', return_value=folder)
-            remote_download = remote_patch.start()
-            background_patch = patch('gui_services.download_remaining_uat_audits')
-            background_download = background_patch.start()
             output_patch = patch('log_core.DEFAULT_OUTPUT', folder / 'exports')
             output_patch.start()
-            listing_patch = patch('gui_services.list_remote_logs', return_value=[
-                '/uat/tango.log.2026-10-14.gz', '/uat/tango.log.2026-10-12',
-                '/uat/tango.log.2026-10-14.part2.gz', '/uat/unrelated'])
-            listing = listing_patch.start()
             with patch('sys.argv', ['web_app.py', '--no-browser']):
                 simulation = user_simulation(main_file=Path(__file__).with_name('web_app.py'))
                 user = await simulation.__aenter__()
@@ -275,30 +309,18 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     inputs['Log folder'].set_value(str(folder))
                     selects['Bank/Acquirer'].set_value('AKTIF/BKT')
                 self.assertFalse(any(e.props.get('label') in ('Load', 'SSH/SCP (UAT)') for e in user.find(ui.button).elements))
-                # File > SSH lists available dates before contacting UAT for a download.
-                user.find(marker='ssh-menu').click()
-                await user.should_see('2 available dates', retries=100)
-                calendar = next(iter(user.find(ui.date).elements))
-                self.assertEqual(calendar.props['options'], ['2026/10/12', '2026/10/14'])
-                self.assertEqual(calendar.props['events'], calendar.props['options'])
-                await user.should_see('tango.log.2026-10-14.gz')
-                remote_download.assert_not_called()
-                user.find('Cancel').click()
-                remote_download.assert_not_called()
-                user.find(marker='ssh-menu').click()
-                await user.should_see('2 available dates', retries=100)
-                ssh_date = max((e for e in user.find(ui.input).elements if e.props.get('label') == 'SSH date'), key=lambda e: e.id)
-                self.assertTrue(ssh_date.props['readonly'])
+                await user.should_not_see(marker='ssh-menu')
+                await user.should_see('Import local logs')
+                await user.should_see('Import remote logs (UAT)')
+                user.find(marker='import-menu').click()
+                await user.should_see('Import local log folder')
+                local_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
+                local_selects = {e.props.get('label'): e for e in user.find(ui.select).elements}
                 with user:
-                    ssh_date.set_value('2026-10-14')
-                user.find('Download and load').click()
+                    local_inputs['Folder path'].set_value(str(folder))
+                    local_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
+                user.find('Load folder').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
-                remote_download.assert_called_once()
-                self.assertEqual(remote_download.call_args.args[:2], ('2026-10-14', 'AKTIF/BKT'))
-                await user.should_see('Background audits ready for all banks', retries=100)
-                background_download.assert_called_once()
-                self.assertEqual(background_download.call_args.args[:2], ('2026-10-14', folder.resolve()))
-                self.assertEqual(selects['Bank/Acquirer'].value, 'AKTIF/BKT')
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
                 with user:
@@ -356,28 +378,16 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 response = await user.download.next(timeout=10)
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.content.startswith(b'PK'))
-                user.find(marker='ssh-menu').click()
-                await user.should_see('2 available dates', retries=100)
-                listing.return_value = []
-                user.find(kind=ui.button, content='Refresh dates').click()
-                await user.should_see('No dated Tango log files found on UAT.', retries=100)
-                download_button = max((e for e in user.find(ui.button).elements if e.props.get('label') == 'Download and load'), key=lambda e: e.id)
-                self.assertFalse(download_button.enabled)
-                listing.side_effect = OSError('test SSH connection failure')
-                user.find(kind=ui.button, content='Refresh dates').click()
-                await user.should_see('Could not list UAT logs:', retries=100)
-                self.assertFalse(download_button.enabled)
                 with user:
                     selects['Bank/Acquirer'].set_value('AKTIF/BKTKOS')
                 await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
-                self.assertEqual(remote_download.call_count, 1)
                 user.find(marker='settings-menu').click()
-                await user.should_see('SSH user')
+                await user.should_see('Output folder')
                 settings_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
-                self.assertFalse(settings_inputs['Sudo password (leave empty to keep current)'].value)
+                self.assertNotIn('SSH user', settings_inputs)
+                self.assertNotIn('Sudo password (leave empty to keep current)', settings_inputs)
                 with user:
                     settings_inputs['Output folder'].set_value(str(folder / 'saved'))
-                    settings_inputs['SSH user'].set_value('web-user')
                 user.find('Save settings').click()
                 await user.should_see('Settings updated.')
                 user.find(marker='export-options-menu').click()
@@ -394,23 +404,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                     import_selects['Import Bank/Acquirer'].set_value('AKTIF/BKT')
                 user.find('Load folder').click()
                 await user.should_see('Loaded transactions: 2', retries=100)
-                self.assertEqual(remote_download.call_count, 1)
-                listing.side_effect = None
-                listing.return_value = ['/uat/tango.log.2026-10-14.gz']
-                user.find(marker='ssh-menu').click()
-                await user.should_see('1 available dates', retries=100)
-                ssh_banks = max((e for e in user.find(ui.select).elements if e.props.get('label') == 'SSH Bank/Acquirer'), key=lambda e: e.id)
-                with user:
-                    ssh_banks.set_value('All')
-                user.find('Download and load').click()
-                await user.should_see('All available banks downloaded.', retries=100)
-                self.assertEqual(remote_download.call_args.args[:2], ('2026-10-14', 'All'))
-                self.assertEqual(background_download.call_count, 1)
             finally:
                 await simulation.__aexit__(None, None, None)
-                remote_patch.stop()
-                listing_patch.stop()
-                background_patch.stop()
                 output_patch.stop()
 
 
