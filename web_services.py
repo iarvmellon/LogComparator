@@ -147,7 +147,7 @@ class BackgroundAudits:
 
 COLUMNS = [
     ('datetime', 'Date/Time'), ('transuid', 'TransUID'), ('stan', 'STAN'),
-    ('rrn', 'RRN'), ('authcode', 'AuthCode'), ('sequencenumber', 'Sequence_Number'),
+    ('rrn', 'RRN'), ('authcode', 'AuthCode'), ('sequencenumber', 'SeqNo'),
     ('transactiontype', 'TransactionType'), ('tid', 'TID'), ('mid', 'MID'),
     ('amt', 'AMT'), ('responsecodespdh', 'RC_SPDH'), ('responsecodeiso', 'RC_ISO'),
     ('possibleproblem', 'Possible problem'),

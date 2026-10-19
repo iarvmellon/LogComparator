@@ -64,7 +64,7 @@ export function installColumnSizing(component) {
     if (!htmlTable) return;
     const visible = table.visibleColumns;
     const columns = component.columns.filter(column => !visible || visible.includes(column.name));
-    const size = parseFloat(getComputedStyle(root).getPropertyValue('--log-font')) || 13;
+    const size = parseFloat(getComputedStyle(root).getPropertyValue('--log-font')) || 10;
     const family = getComputedStyle(root).fontFamily;
     const bodyFont = `400 ${size}px ${family}`;
     const headerFont = `800 ${size + 2}px ${family}`;

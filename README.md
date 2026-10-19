@@ -1130,3 +1130,7 @@ both banks because they use the shared OPNBISOBKT process. Explicit acquirer IDs
 still restrict financial transactions and Logons to the matching bank.
 
 The Selection viewer to the right of Time range independently shows or hides Warnings, Errors, Succeeded and Unknown transactions. All four are enabled initially; these controls combine with the time and text filters. Unknown controls rows without a diagnostic category.
+
+The transaction list starts with compact 10px text and bold 12px headers so all columns fit more comfortably on screen. View font-size controls remain available; column widths are recalculated for the chosen font.
+
+The sequence-number column and its filter are labeled **SeqNo**.

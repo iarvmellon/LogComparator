@@ -165,8 +165,8 @@ html, body { height:100%; overflow:hidden; }
 .q-btn { border-radius:0; text-transform:none; }
 .q-table__container { border:1px solid #aaa; border-radius:0; width:100%; }
 .q-table th { font-weight:bold; background:white; }
-.q-table th, .q-table td { font-size:var(--log-font,13px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
-.log-table thead th { font-size:calc(var(--log-font,13px) + 2px); font-weight:800; }
+.q-table th, .q-table td { font-size:var(--log-font,10px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
+.log-table thead th { font-size:calc(var(--log-font,10px) + 2px); font-weight:800; }
 .log-table th, .log-table td { overflow:hidden; text-overflow:ellipsis; }
 .log-table th:first-child, .log-table td:first-child { width:44px!important; min-width:44px!important; max-width:44px!important; padding:0 6px!important; text-align:center; }
 .log-table th:first-child .q-checkbox, .log-table td:first-child .q-checkbox { vertical-align:middle; }
@@ -204,7 +204,7 @@ def index():
     background_job = None
     pending_bank = None
     preview_id = None
-    font_size = 13
+    font_size = 10
     column_revision = 0
     previous_offset = 0
     last_source_signature = None
