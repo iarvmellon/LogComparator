@@ -12,6 +12,12 @@ messages that belong to each transaction, and displays the results in a table.
 You can search for a transaction, inspect its complete log, review possible
 problems, save its log, or compare it with another transaction.
 
+## Web interface diagram
+
+[![LogComparator web interface diagram](Log_Comparator_Web_Interface_Rectangles.drawio.png)](Log_Comparator_Web_Interface_Rectangles.drawio.png)
+
+Click the diagram to view it at full size.
+
 ## Getting started
 
 On Windows, open `dist/LogComparator.exe` or the Desktop shortcut.

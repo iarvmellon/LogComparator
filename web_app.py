@@ -55,6 +55,11 @@ def health():
     return {'app': 'LogComparator', 'ui': 'web', 'version': core.APP_BUILD_DESCRIBE}
 
 
+@app.get('/Log_Comparator_Web_Interface_Rectangles.drawio.png')
+def readme_diagram():
+    return FileResponse(Path(__file__).with_name('Log_Comparator_Web_Interface_Rectangles.drawio.png'), media_type='image/png')
+
+
 @app.get('/readme', response_class=HTMLResponse)
 def readme_page():
     """Display the same README distributed with the application."""
@@ -65,7 +70,7 @@ def readme_page():
                 '<meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>LogComparator - README</title><style>'
                 'body{max-width:1050px;margin:32px auto;padding:0 20px;font:16px/1.6 Arial,sans-serif;color:#202124;background:#fff}'
-                'h1,h2,h3{line-height:1.3}h2{margin-top:36px;border-bottom:1px solid #ddd;padding-bottom:8px}'
+                'img{max-width:100%;height:auto}h1,h2,h3{line-height:1.3}h2{margin-top:36px;border-bottom:1px solid #ddd;padding-bottom:8px}'
                 'a{color:#1976d2}pre{padding:16px;background:#f4f5f6;overflow:auto}'
                 'code{font-family:Consolas,monospace}table{display:block;overflow:auto;border-collapse:collapse;max-width:100%}'
                 'th,td{border:1px solid #ddd;padding:8px 12px;text-align:left}th{background:#f4f5f6}'
