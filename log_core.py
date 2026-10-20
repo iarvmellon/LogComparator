@@ -1509,6 +1509,22 @@ def collect_tango_lines(
     return lines_by_uid
 
 
+def collect_tango_lines_from_sources(
+    paths: Iterable[Path], transaction_uids: set[str],
+) -> dict[str, list[str]]:
+    """Read every supplied source once, preserving file and line order."""
+    combined: dict[str, list[str]] = defaultdict(list)
+    seen: set[str] = set()
+    for path in paths:
+        key = str(Path(path).resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        for uid, lines in collect_tango_lines(path, transaction_uids).items():
+            combined[uid].extend(lines)
+    return combined
+
+
 def tango_field(lines: list[str], name: str) -> str:
     pattern = re.compile(rf"(?:^|/){re.escape(name)}=([^/|]*)", re.IGNORECASE)
     for line in reversed(lines):
@@ -1858,6 +1874,7 @@ def split_audit_files(
     include_internal: bool = True,
     include_tango_to_network: bool = True,
     include_network_to_tango: bool = True,
+    tango_log_paths: list[Path] | None = None,
 ) -> dict[str, int]:
     if not input_paths:
         raise ValueError("No audit files were supplied for analysis.")
@@ -1935,7 +1952,8 @@ def split_audit_files(
         if protocol_choice not in PROTOCOL_SUFFIX_BY_CHOICE:
             raise ValueError(f"Unknown protocol selection: {protocol_choice}")
     filenames = build_filenames(transactions)
-    tango_lines_by_uid = collect_tango_lines(tango_log_path, set(transactions))
+    tango_sources = ([tango_log_path] if tango_log_path else []) + list(tango_log_paths or [])
+    tango_lines_by_uid = collect_tango_lines_from_sources(tango_sources, set(transactions))
     transaction_headers_by_uid: dict[str, str] = {}
     for uid, transaction in transactions.items():
         transaction_headers_by_uid[uid] = format_transaction_summary(

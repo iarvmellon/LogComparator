@@ -181,6 +181,8 @@ rows have a blue outline and keep their result color. You can select several row
   including those on other table pages.
 - **Edit > Clear selection** deselects all rows.
 
+Open, Export and Compare search all loaded TANGO log files for the selected day, including separate files per bank and rotated files. Each transaction includes its matching TANGO lines from every source, together with its audit messages.
+
 Selected single-transaction logs are prepared ahead of Open and reused while their source and options stay unchanged. Preview generation takes priority over background bank preparation. The log appears before its output-folder copy finishes. If that copy fails, the transaction tab reports it.
 
 When opening several transactions, their tabs are requested directly from your click. If the browser blocks additional tabs, allow pop-ups for this site and click Open again.

@@ -435,7 +435,7 @@ def export_logs(loaded: LoadedLogs, uids: list[str], output: Path, **options) ->
     with foreground_request(), CORE_LOCK:
         core.split_audit_files(loaded.audits, output, bank=loaded.bank,
                               transaction_uids=set(uids),
-                              tango_log_path=loaded.tango_logs[0] if loaded.tango_logs else None,
+                              tango_log_paths=loaded.tango_logs,
                               **options)
     paths = [output / f'{core.safe_component(uid)}.log' for uid in dict.fromkeys(uids)]
     if any(not path.is_file() for path in paths):
