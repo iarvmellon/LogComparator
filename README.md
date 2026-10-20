@@ -140,6 +140,8 @@ Choose which result categories should be visible:
 | **Succeeded** | Transactions classified as successful. |
 | **Unknown** | Transactions without one of the above classifications. |
 
+An Echo with only ISO request and response messages is classified as successful (green) when the exchange matches and the ISO response code is `000` or `00` (Approved). Existing diagnostic errors or warnings retain their priority.
+
 All four options start enabled. Uncheck a category to hide its rows.
 These checkboxes filter the list; they do not select rows for Open or Export.
 

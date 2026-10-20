@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Iterable
-from iso_checks import check_iso_messages, is_one_way_echo, is_logon_pair, is_inbound_logon
+from iso_checks import check_iso_messages, is_one_way_echo, is_logon_pair, is_inbound_logon, RESPONSE_MTIS
 from diagnostic_common import check_original_transactions, normalized
 from spdh_checks import check_spdh_messages
 
@@ -25,6 +25,20 @@ def select_transaction_operation(transaction):
 def is_successful_protocol_only(transaction: Transaction) -> bool:
     if is_one_way_heartbeat(transaction):
         return True
+    if transaction.iso_messages and not transaction.spdh_messages:
+        requests = [m for m in transaction.iso_messages if m.phase == 'request']
+        responses = [m for m in transaction.iso_messages if m.phase == 'response']
+        echo = (select_transaction_operation(transaction) == 'Echo_Test'
+                or (bool(requests) and all(m.values.get('network_management_code', '').lstrip('0') == '301'
+                                          for m in requests)))
+        if echo and requests and responses:
+            def paired(request, response):
+                return (request.process == response.process
+                        and RESPONSE_MTIS.get(request.values.get('mti')) == response.values.get('mti')
+                        and bool(response.values.get('mti')))
+            return (all(any(paired(request, response) for response in responses) for request in requests)
+                    and all(any(paired(request, response) for request in requests) for response in responses)
+                    and all(m.values.get('rc') in {'00', '000'} for m in responses))
     if select_transaction_operation(transaction) == 'Logon' and transaction.iso_messages:
         if all(is_inbound_logon(message) for message in transaction.iso_messages):
             return True

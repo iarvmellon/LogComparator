@@ -230,6 +230,7 @@ TANGO_TRANSACTION_MTI_NAMES = {
 
 ISO_RC_NAMES = {
     "00": "Approved",
+    "000": "Approved",
     "01": "Refer_to_card_issuer",
     "03": "Invalid_merchant",
     "04": "Pick_up_card",

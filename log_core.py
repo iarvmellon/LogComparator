@@ -216,7 +216,7 @@ class Transaction:
         flow_type = block.flow_type.upper()
         if (
             block.process_name.upper().startswith("OPN")
-            and flow_dir == "NETWORK-->TANGO"
+            and flow_dir in {"NETWORK-->TANGO", "TANGO-->NETWORK"}
             and re.match(r"^RESPONSE\b", flow_type.strip())
         ):
             self.iso_response_codes.extend(block.response_codes)
