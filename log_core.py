@@ -444,7 +444,8 @@ def parse_block(text: str, index: int) -> BlockMeta:
         elif name == "flowtype":
             flow_type = value
 
-    trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
+    # The audit header identifies this message; Bus data may reference a different UID.
+    trans_uids = unique_nonempty(plain.get("transuid", []) + fields.get("transuid", []))
     trans_uid = trans_uids[0] if trans_uids else None
 
     # The current message MTI identifies the operation shown in WebTANGO.
@@ -695,7 +696,8 @@ def parse_block_for_list(text: str, index: int) -> BlockMeta:
                         audit_value[value_start + 1 : value_end].strip()
                     )
 
-    trans_uids = unique_nonempty(fields.get("transuid", []) + plain.get("transuid", []))
+    # The audit header identifies this message; Bus data may reference a different UID.
+    trans_uids = unique_nonempty(plain.get("transuid", []) + fields.get("transuid", []))
     trans_uid = trans_uids[0] if trans_uids else None
     # Match parse_block(): prefer the current operation over its referenced
     # origin so voids and reversals are labelled with their actual MTI.
@@ -1219,7 +1221,8 @@ def cached_target_blocks(
         return located_blocks
 
     blocks_by_uid = AUDIT_BLOCK_TEXT_CACHE.get(cache_key)
-    if blocks_by_uid is None:
+    # Text caches contain only previously requested UIDs, not a complete index.
+    if blocks_by_uid is None or not target_uids.issubset(blocks_by_uid):
         return None
     blocks: list[tuple[int, str]] = []
     for uid in target_uids:
