@@ -13,6 +13,7 @@ services:
     ports:
       - "${LOGCOMPARATOR_PORT:-4020}:8080"
     environment:
+      LOGCOMPARATOR_PARSE_WORKERS: ${LOGCOMPARATOR_PARSE_WORKERS:-4}
       LOGCOMPARATOR_SSL_CERTFILE: /data/tls/server.crt
       LOGCOMPARATOR_SSL_KEYFILE: /data/tls/server.key
       LOGCOMPARATOR_LOG_DIR: /data/cache/local/log

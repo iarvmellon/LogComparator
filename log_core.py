@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 import source_memory
 import contextlib
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+from collections import deque
 
 import argparse
 import gzip
@@ -1373,43 +1376,98 @@ def scan_transactions(
     return transactions, correlated
 
 
+PARALLEL_AUDIT_MIN_BYTES = 32 * 1024 * 1024
+AUDIT_BATCH_BYTES = 2 * 1024 * 1024
+AUDIT_BATCH_BLOCKS = 256
+
+
+def audit_worker_count() -> int:
+    """Bound CPU and memory use; 1 disables parallel parsing."""
+    try:
+        requested = int(os.environ.get("LOGCOMPARATOR_PARSE_WORKERS", "4"))
+    except ValueError:
+        requested = 4
+    return max(1, min(requested, 4, os.cpu_count() or 1))
+
+
+def _parse_list_batch(batch):
+    # Workers receive small text batches, never source files or shared caches.
+    return [(index, path, start, end, parse_block_for_list(text, index))
+            for index, path, start, end, text in batch]
+
+
+def _audit_list_batches(input_paths, total_bytes, progress_callback):
+    index = processed_bytes = batch_bytes = 0
+    batch = []
+    for input_path in input_paths:
+        file_size = source_memory.stat(input_path).st_size
+        for start, end, text in iter_marker_block_locations_from_file(input_path):
+            batch.append((index, str(input_path), start, end, text))
+            batch_bytes += len(text) * 2
+            index += 1
+            if len(batch) >= AUDIT_BATCH_BLOCKS or batch_bytes >= AUDIT_BATCH_BYTES:
+                yield batch
+                batch, batch_bytes = [], 0
+                if progress_callback:
+                    progress_callback(processed_bytes + end, total_bytes,
+                                      f"Load transactions: {input_path.name}")
+        if batch:
+            yield batch
+            batch, batch_bytes = [], 0
+        processed_bytes += file_size
+        if progress_callback:
+            progress_callback(processed_bytes, total_bytes,
+                              f"Load transactions: {input_path.name}")
+
+
+def _parsed_list_batches(batches, workers):
+    if workers == 1:
+        for batch in batches:
+            yield _parse_list_batch(batch)
+        return
+    # Spawn avoids inheriting GUI threads/locks on Linux and supports frozen Windows.
+    pool = ProcessPoolExecutor(max_workers=workers,
+                               mp_context=multiprocessing.get_context("spawn"))
+    pending = deque()
+    try:
+        for batch in batches:
+            pending.append(pool.submit(_parse_list_batch, batch))
+            if len(pending) >= workers * 2:
+                yield pending.popleft().result()
+        while pending:
+            yield pending.popleft().result()
+    finally:
+        for future in pending:
+            future.cancel()
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def scan_transactions_for_list(
     input_paths: list[Path],
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Transaction]:
     transactions: dict[str, Transaction] = {}
     locations_by_uid: dict[str, list[tuple[int, str, int, int]]] = defaultdict(list)
-    index = 0
     total_bytes = sum(source_memory.stat(path).st_size for path in input_paths)
-    processed_bytes = 0
-    for input_path in input_paths:
-        file_size = source_memory.stat(input_path).st_size
-        for start, end, block_text in iter_marker_block_locations_from_file(input_path):
-            if progress_callback and index % 4096 == 0:
-                progress_callback(processed_bytes + start, total_bytes, f"Load transactions: {input_path.name}")
-            block = parse_block_for_list(block_text, index)
-            if not block.trans_uid:
-                index += 1
-                continue
-            locations_by_uid[block.trans_uid].append(
-                (index, str(input_path), start, end)
-            )
-            transaction = transactions.setdefault(
-                block.trans_uid,
-                Transaction(trans_uid=block.trans_uid, first_index=index),
-            )
-            transaction.add(block)
-            index += 1
-        processed_bytes += file_size
-        if progress_callback:
-            progress_callback(
-                processed_bytes,
-                total_bytes,
-                f"Load transactions: {input_path.name}",
-            )
-    AUDIT_BLOCK_LOCATION_CACHE[input_paths_cache_key(input_paths)] = dict(
-        locations_by_uid
-    )
+    workers = audit_worker_count() if total_bytes >= PARALLEL_AUDIT_MIN_BYTES else 1
+    batches = _audit_list_batches(input_paths, total_bytes, progress_callback)
+    parsed = _parsed_list_batches(batches, workers)
+    try:
+        for results in parsed:
+            for index, path, start, end, block in results:
+                if not block.trans_uid:
+                    continue
+                locations_by_uid[block.trans_uid].append((index, path, start, end))
+                transaction = transactions.setdefault(
+                    block.trans_uid,
+                    Transaction(trans_uid=block.trans_uid, first_index=index),
+                )
+                transaction.add(block)
+    finally:
+        parsed.close()
+        batches.close()
+    # Publish only complete results; interrupted scans leave no partial cache.
+    AUDIT_BLOCK_LOCATION_CACHE[input_paths_cache_key(input_paths)] = dict(locations_by_uid)
     return transactions
 
 

@@ -615,3 +615,9 @@ node testing/test_browser_actions.js
 ```powershell
 .\.venv\Scripts\python.exe main.py audit.file1 audit.file2 --stan 123456 --rrn 000358000879 --authcode A1B2C3 -o C:\path\to\output
 ```
+
+### Parallel processing of large audit logs
+
+Audit imports of 32 MiB or more use four parser processes by default. Small text batches are processed in parallel and merged in source order, preserving transaction pairing and the byte locations used by Open. This also works with remote archives held in memory: the workers receive batches, not copies of the whole archive. Small imports stay sequential to avoid process startup overhead.
+
+Set `LOGCOMPARATOR_PARSE_WORKERS` to `1` to disable parallel parsing, or `2` to `4` to choose the maximum number of workers (also limited by available CPUs). For Docker Compose, put this setting in `.env` and recreate the container. The default is four workers; set it to two to reduce CPU and memory use. Only a bounded number of batches is queued; transaction results and existing source caches still require memory proportional to the data. Background preparation continues to yield to foreground requests. Actual speedup depends on CPU, disk speed and log contents.
