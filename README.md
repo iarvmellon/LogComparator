@@ -473,6 +473,8 @@ The default destination is `10.1.110.84:22`, SSH user `j.arvanitis`, directory `
 
 The local `deploy_docker.ps1` contains `$RemoteUser` and `$SshPassword`, so it runs without credential prompts. It is excluded from Git and the Docker build context. The repository contains only `deploy_docker.example.ps1`, with a password placeholder. On a new checkout, copy the example to `deploy_docker.ps1` and set the credentials there. There is no separate deployment `.py` file: the PowerShell script embeds its SSH helper and uses the project's existing virtual environment and SSH/SCP libraries. No Linux packages are installed.
 
+Before building or reusing an image, the script checks that the local Docker engine is reachable and uses Linux containers. A missing `dockerDesktopLinuxEngine` pipe means the Windows Docker engine is unavailable, even if the server preflight passed. Start Docker Desktop in **Linux containers** mode and wait until `docker info` succeeds, then rerun the script. If Desktop is already running, check `docker context show` and any `DOCKER_HOST` / `DOCKER_CONTEXT` overrides. `-SkipBuild` still needs the local engine to export the image; `-CheckOnly` checks only the server.
+
 Optional switches:
 
 ```powershell
@@ -694,3 +696,7 @@ The TransUID column displays only identifiers present in the logs. Audit-only lo
 RC_SPDH and RC_ISO show the code first, followed by its description, for example `(000) Approved` or `(05) Do not honor`. Existing response-code emphasis and consistency colors are unchanged.
 
 The transaction list uses normal scrolling for pages of up to 100 transactions and for result lists containing at most 100 transactions. Larger pages (including All) use virtual scrolling to limit browser memory. Scroll to the bottom to view the last transactions on the current page; the list retains its position without wrapping back to the first rows. Table styling preserves the virtual-scroll spacer heights.
+
+The transaction log opened with **Open** or a transaction link uses a scrollable viewer that fits the browser window. Long lines remain unwrapped, with horizontal scrolling at the bottom of the viewer, visible without going to the end of the log. The download and log-loading controls stay outside the scrolling text.
+
+**Export Results** also keeps the results table in a viewer that fits the browser window, with horizontal and vertical scrolling inside the table area. This applies to newly generated HTML reports. Exported `.log` files are plain text; their scrolling and line wrapping depend on the text editor used to open them.

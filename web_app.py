@@ -98,8 +98,11 @@ def transaction_page(source_id: str, uid: str):
     document = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$preview_title</title><style>
-body{font-family:Arial,sans-serif;margin:16px;color:#151515;background:#fff}
-h1{font-size:18px;font-weight:500}pre{font:13px Consolas,monospace;white-space:pre;overflow:auto}
+html{height:100%}
+body{font-family:Arial,sans-serif;margin:16px;color:#151515;background:#fff;height:calc(100% - 32px);height:calc(100dvh - 32px);display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}
+body>*{flex-shrink:0;max-width:100%;box-sizing:border-box}
+h1{font-size:18px;font-weight:500;overflow-wrap:anywhere}
+pre{font:13px Consolas,monospace;white-space:pre;overflow:auto;flex:1 1 0;min-height:0;min-width:0;width:100%;margin:12px 0;scrollbar-gutter:stable}
 #loading{display:flex;align-items:center;gap:8px;margin:16px 0}
 .spinner{width:18px;height:18px;border:3px solid #ddd;border-top-color:#1976d2;border-radius:50%;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}[hidden]{display:none!important}
@@ -110,7 +113,7 @@ a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;t
 </style></head><body><h1>$preview_title</h1>
 <div id="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading transaction log...</div>
 <p id="error" role="alert" hidden></p><a id="download" hidden>Download log</a><pre id="log"></pre>
-<p id="log-status" role="status"></p><button id="more" hidden>Load more</button><button id="all" hidden>Load full log</button>
+<p id="log-status" role="status"></p><div><button id="more" hidden>Load more</button><button id="all" hidden>Load full log</button></div>
 <script src="/logcomparator-assets/transaction_view.js"></script>
 <script>window.logComparatorShowTransaction($preview_data_url);</script></body></html>'''
     document = Template(document).substitute(preview_title=title, preview_data_url=script_url)

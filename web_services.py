@@ -477,10 +477,10 @@ def render_results_report(rows, columns, settings, selected_uids=()):
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>LogComparator - Results</title><style>'
-            'body{font:13px Arial,sans-serif;margin:20px;color:#151515;background:white}'
-            'dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 20px}'
+            'html{height:100%}body{font:13px Arial,sans-serif;margin:20px;color:#151515;background:white;height:calc(100% - 40px);height:calc(100dvh - 40px);display:flex;flex-direction:column;overflow:hidden}body>*{flex-shrink:0;min-width:0}h1{overflow-wrap:anywhere}.results-table{flex:1 1 0;min-height:0;overflow:auto;scrollbar-gutter:stable}'
+            'dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 20px;max-height:25vh;overflow:auto}'
             'dt{font-weight:bold}dd{margin:0;white-space:pre-wrap}table{border-collapse:collapse;font-size:11px}'
             'th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;white-space:nowrap}'
             'th{background:#eee;font-weight:bold}</style></head><body><h1>LogComparator - Results</h1>'
             '<dl>' + metadata + '</dl><p>Transactions: ' + str(len(rows)) + '</p>'
-            '<table><thead><tr>' + headers + '</tr></thead><tbody>' + ''.join(body) + '</tbody></table></body></html>')
+            '<div class="results-table"><table><thead><tr>' + headers + '</tr></thead><tbody>' + ''.join(body) + '</tbody></table></div></body></html>')

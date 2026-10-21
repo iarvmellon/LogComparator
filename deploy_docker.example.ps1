@@ -201,8 +201,33 @@ function Invoke-RemotePhase([string]$Phase) {
     }
 }
 
+function Test-LocalDocker {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw 'Docker CLI was not found. Install Docker Desktop on Windows, start it in Linux containers mode, then rerun .\deploy_docker.ps1. The server was not updated.'
+    }
+    # Capture native stderr so Windows PowerShell also gives our actionable error.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $engine = & docker info --format '{{.OSType}}' 2>$null
+        $dockerExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($dockerExitCode -ne 0) {
+        throw 'The local Docker engine is unavailable. Start Docker Desktop, select Linux containers, and wait until docker info succeeds, then rerun .\deploy_docker.ps1. If Desktop is already running, check docker context show and the DOCKER_HOST/DOCKER_CONTEXT environment variables. The server was not updated.'
+    }
+    if (("$engine").Trim() -ne 'linux') {
+        throw 'The local Docker engine must use Linux containers. Switch Docker Desktop to Linux containers, wait until it is ready, then rerun .\deploy_docker.ps1. The server was not updated.'
+    }
+}
+
 Push-Location $PSScriptRoot
 try {
+    if (-not $CheckOnly) {
+        Write-Output 'Checking the local Docker Linux engine...'
+        Test-LocalDocker
+    }
     Write-Output "[1/6] Checking $RemoteUser@$Server..."
     Invoke-RemotePhase 'check'
     if (-not $CheckOnly) {
