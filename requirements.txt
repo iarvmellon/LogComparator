@@ -1,6 +1,7 @@
 # Python 3.10 or newer is required.
 # The browser UI and all its local assets are included in the executable.
 nicegui==3.18.0
+psutil==7.2.2
 watchfiles>=1.0,<2
 paramiko>=3.5,<5
 scp>=0.15,<0.16

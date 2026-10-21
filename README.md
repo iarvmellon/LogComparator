@@ -197,6 +197,8 @@ Selected single-transaction logs are prepared ahead of Open and reused while the
 
 When opening several transactions, their tabs are requested directly from your click. If the browser blocks additional tabs, allow pop-ups for this site and click Open again.
 
+Transaction tabs include built-in log highlighting: responseCode, resultCode, retrievRefNumber/RRN, MTI and transUID lines appear blue; mapped decline response codes and special result codes appear red and bold, taking precedence over blue. Highlighting also applies when loading more text. This formatting is independent of the consistency classification in the main list. Downloads retain the original plain text. No Notepad++ lexer configuration is required.
+
 Large transaction logs initially show the first 256 KiB so the tab can display text quickly. **Load more** adds the next part; **Load full log** loads the rest in small steps. **Download log** always saves the complete file. TANGO source searches scan byte chunks and decode only matching lines, rather than processing every line in Python.
 
 An opened transaction log is a snapshot. It does not refresh automatically when
@@ -682,3 +684,5 @@ node testing/test_browser_actions.js
 Audit imports of 32 MiB or more use four parser processes by default. Small text batches are processed in parallel and merged in source order, preserving transaction pairing and the byte locations used by Open. This also works with remote archives held in memory: the workers receive batches, not copies of the whole archive. Small imports stay sequential to avoid process startup overhead.
 
 Set `LOGCOMPARATOR_PARSE_WORKERS` to `1` to disable parallel parsing, or `2` to `4` to choose the maximum number of workers (also limited by available CPUs). For Docker Compose, `.env.docker.example` includes `LOGCOMPARATOR_PARSE_WORKERS=4`. Copy it to `.env`, or update your existing `.env`, and recreate the container after changing this setting. The default is four workers; set it to two to reduce CPU and memory use. Only a bounded number of batches is queued; transaction results and existing source caches still require memory proportional to the data. Background preparation continues to yield to foreground requests. Actual speedup depends on CPU, disk speed and log contents.
+
+The bottom status line shows **System CPU** (overall system utilization, 0-100%) and **App RAM**, refreshed every two seconds. In Docker, system CPU refers to the CPU statistics visible inside the container. App RAM measures the LogComparator server and its parser workers, rather than the browser or the whole host. RAM is summed resident memory in MiB; shared pages between processes may be counted more than once.

@@ -45,14 +45,19 @@ const {Diff2HtmlUI} = require('../logcomparator_ui/assets/diff2html-ui-base.min.
   assert(failed.error.textContent.includes('Export failed'));
   const transactionScript=fs.readFileSync(path.join(__dirname,'../logcomparator_ui/assets/transaction_view.js'),'utf8');
   async function transaction(responses) {
+    function node() { return {children:[],value:'',hidden:false, set textContent(v){this.value=v;this.children=[];},get textContent(){return this.value+this.children.map(c=>c.textContent).join('');},appendChild(child){if(child.fragment){for(const c of [...child.children])this.appendChild(c);}else{this.children.push(child);child.parent=this;}},remove(){this.parent.children=this.parent.children.filter(c=>c!==this);}}; }
     const elements={};
-    for (const id of ['log','error','log-status','more','all','download','loading']) elements[id]={textContent:'',hidden:['error','more','all','download'].includes(id),appendChild(node){this.textContent+=node.textContent;}};
+    for (const id of ['log','error','log-status','more','all','download','loading']) elements[id]=Object.assign(node(),{hidden:['error','more','all','download'].includes(id)});
     const calls=[];
     const context={window:{},setTimeout,
-      document:{getElementById:id=>elements[id],createTextNode:text=>({textContent:text})},
+      document:{getElementById:id=>elements[id],createElement:()=>node(),createDocumentFragment:()=>Object.assign(node(),{fragment:true})},
       fetch:async url=>{calls.push(url);const data=responses[url];assert(data,`Unexpected request: ${url}`);return {ok:!data.error,json:async()=>data};},
     };
     vm.runInNewContext(transactionScript,context);
+    assert.equal(context.window.logComparatorLogLineClass('transUId : 123'), 'log-blue');
+    assert.equal(context.window.logComparatorLogLineClass('responseCode=051'), 'log-red');
+    assert.equal(context.window.logComparatorLogLineClass('responseCode=000'), 'log-blue');
+    assert.equal(context.window.logComparatorLogLineClass('plain <script>'), '');
     await context.window.logComparatorShowTransaction('/initial');
     return {elements,calls};
   }

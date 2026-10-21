@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import psutil
 import asyncio
 import inspect
 import html
@@ -95,6 +96,7 @@ h1{font-size:18px;font-weight:500}pre{font:13px Consolas,monospace;white-space:p
 button{margin-right:8px;padding:6px 12px;cursor:pointer}
 a{display:inline-block;padding:6px 12px;border:1px solid #1976d2;color:#1976d2;text-decoration:none}
 #error{color:#b00020}
+.log-blue{color:#0000ff}.log-red{color:#ff0000;font-weight:700}
 </style></head><body><h1>$preview_title</h1>
 <div id="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading transaction log...</div>
 <p id="error" role="alert" hidden></p><a id="download" hidden>Download log</a><pre id="log"></pre>
@@ -257,7 +259,7 @@ html, body { height:100%; overflow:hidden; }
 .workspace { height:100vh; height:100dvh; max-width:100%; box-sizing:border-box; overflow:hidden; flex-wrap:nowrap; }
 .workspace > * { flex-shrink:0; }
 .workspace > .log-table { flex:1 1 0; min-height:0; overflow:hidden; }
-.workspace-footer { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.8fr) 180px max-content; align-items:center; gap:12px; width:100%; height:28px; min-height:28px; overflow:hidden; white-space:nowrap; }
+.workspace-footer { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.8fr) 180px max-content max-content; align-items:center; gap:12px; width:100%; height:28px; min-height:28px; overflow:hidden; white-space:nowrap; }
 .footer-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .footer-progress { width:180px; height:20px; display:flex; align-items:center; }
 .menubar { background:#fafafa; border-bottom:1px solid #c4c4c4; gap:0; width:100%; }
@@ -323,6 +325,39 @@ html, body { height:100%; overflow:hidden; }
 .status { font-size:13px; }
 .log-text { white-space:pre; overflow:auto; font-family:Consolas,monospace; font-size:13px; max-height:70vh; margin:0; }
 '''
+
+
+class ApplicationResources:
+    """Sample overall system CPU and resident application/worker memory."""
+
+    @staticmethod
+    def cpu_snapshot():
+        times = psutil.cpu_times()
+        total = sum(times) - getattr(times, 'guest', 0) - getattr(times, 'guest_nice', 0)
+        idle = times.idle + getattr(times, 'iowait', 0)
+        return total, idle
+
+    def __init__(self):
+        self.parent = psutil.Process()
+        self.previous_cpu = self.cpu_snapshot()
+
+    def sample(self):
+        total, idle = self.cpu_snapshot()
+        elapsed = total - self.previous_cpu[0]
+        idle_elapsed = idle - self.previous_cpu[1]
+        self.previous_cpu = total, idle
+        cpu = max(0.0, min(100.0, 100 * (1 - idle_elapsed / elapsed))) if elapsed > 0 else 0.0
+        try:
+            active = [self.parent, *self.parent.children(recursive=True)]
+        except psutil.Error:
+            return f'System CPU: {cpu:.1f}% | App RAM: unavailable'
+        memory = 0
+        for process in active:
+            try:
+                memory += process.memory_info().rss
+            except psutil.Error:
+                continue  # A worker can exit between discovery and sampling.
+        return f'System CPU: {cpu:.1f}% | App RAM: {memory / (1024 ** 2):,.0f} MiB'
 
 
 @ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
@@ -1242,11 +1277,19 @@ def index():
         # Keep the slot allocated even while the progress indicator is hidden.
         with ui.element('div').classes('footer-progress'):
             progress_bar = ui.linear_progress(value=0, size='8px', show_value=False).classes('w-full')
+        resources = ApplicationResources()
+        resource_status = ui.label(resources.sample()).classes('status text-gray-600')
+        with resource_status:
+            ui.tooltip('Overall system CPU (0-100%). App RAM: server and parser workers, summed resident memory (shared pages may be counted more than once).')
         ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} - Web').classes('status text-gray-600')
     for control in (protocol, byte_data, internal, outbound, inbound):
         control.on_value_change(update_preview_options)
     progress_bar.set_visibility(False)
     update_actions()
+    async def update_resources():
+        resource_status.set_text(await run.io_bound(resources.sample))
+
+    ui.timer(2.0, update_resources)
     ui.timer(0.2, poll_progress)
     ui.timer(0.25, live_tick)
     def stop_session_workers():
