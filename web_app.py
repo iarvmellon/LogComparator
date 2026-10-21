@@ -576,6 +576,7 @@ def index():
             result = await run.io_bound(load_logs, source, bank_value, date_value, progress,
                                        audit_folder=audit_for_load)
             loaded = result
+            bank.enable()
             if remote_import:
                 source_is_remote = True
                 remote_connection = connection
@@ -1023,6 +1024,7 @@ def index():
         if background_job:
             background_job.cancel_event.set()
         loaded = background_job = pending_bank = preview_id = None
+        bank.disable()
         source_day = ''
         source_is_remote = False
         remote_connection = None
@@ -1132,6 +1134,7 @@ def index():
     with ui.element('div').classes('data-time-row'):
         with panel('Data').classes('data-panel'), ui.element('div').classes('data-controls'):
             bank = ui.select(list(core.BANK_AUDIT_CODES), label='Bank/Acquirer', value=next(iter(core.BANK_AUDIT_CODES)), on_change=change_bank).props('outlined dense').classes('w-full')
+            bank.disable()
             live_enabled = ui.checkbox('Live update', value=False, on_change=configure_live).props('dense').mark('live-update')
             live_status = ui.label().classes('status').mark('live-status')
             with live_status:

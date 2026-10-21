@@ -338,6 +338,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                         remote_bank.set_value('AKTIF/BKT')
                     user.find('Read remote logs').click()
                     await user.should_see('Loaded transactions: 2', retries=100)
+                    self.assertTrue(next(e for e in user.find(ui.select).elements if e.props.get('label') == 'Bank/Acquirer').enabled)
                     transfer.assert_called_once()
                     log_transfer.assert_called_once()
                     self.assertEqual(log_transfer.call_args.args[1], ['tango.log.2026-10-14'])
@@ -491,6 +492,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
 
                 selects = {element.props.get('label'): element for element in user.find(ui.select).elements}
                 self.assertEqual(selects['Timezone'].options, ['UTC-3', 'UTC-2', 'UTC-1', 'UTC', 'UTC+1', 'UTC+2', 'UTC+3'])
+                self.assertFalse(selects['Bank/Acquirer'].enabled)
                 with user:
                     selects['Bank/Acquirer'].set_value('AKTIF/BKT')
                 self.assertFalse(any(e.props.get('label') in ('Load', 'SSH/SCP (UAT)') for e in user.find(ui.button).elements))
@@ -507,6 +509,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 await user.should_see('Loaded transactions: 2', retries=100)
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
+                self.assertTrue(selects['Bank/Acquirer'].enabled)
                 with user:
                     inputs['Possible problem'].set_value('nonexistent-problem')
                 self.assertEqual(len(table.rows), 0)

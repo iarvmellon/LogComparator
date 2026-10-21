@@ -79,6 +79,8 @@ are read in memory. Files from earlier days are saved and extracted locally.
 The source folders are managed by the import process. **Selected date** shows
 the loaded day and bank.
 
+**Bank/Acquirer** is disabled when no logs have been imported. It becomes available after a successful local or remote import.
+
 Use **Bank/Acquirer** to switch banks within the same day. The previous list
 clears immediately while the new bank loads. If its results have already been
 prepared in the background, the application reuses them. To choose another day,
