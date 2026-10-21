@@ -24,3 +24,9 @@ secrets
 certs/
 *.key
 *.pem
+
+deploy_docker.ps1
+
+logcomparator.tar
+
+.docker-export-*

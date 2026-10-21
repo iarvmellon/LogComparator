@@ -455,6 +455,32 @@ complete image on Windows, where Docker can download dependencies, then transfer
 it to Linux. Linux does not need to download Python, application dependencies,
 or a base image. Docker Engine and Docker Compose must already be installed there.
 
+### Automatic build, SCP transfer and deployment
+
+From PowerShell in the project folder, run:
+
+```powershell
+.\deploy_docker.ps1
+```
+
+This single script builds `logcomparator_iarv:latest` for Linux/amd64, creates a fresh `logcomparator.tar`, transfers it and the Compose files with SCP, runs `docker load` over SSH, recreates the service without building or pulling on Linux, and waits for the HTTPS health check. It reports transfer progress and verifies the archive checksum before updating the server.
+
+The default destination is `10.1.110.84:22`, SSH user `j.arvanitis`, directory `/home/j.arvanitis/projects/LogComparator`. It logs in as that user first, then uses sudo for Docker and deployment-file updates. The existing server `.env`, certificates and data volumes are preserved. The server project folder, `.env` and HTTPS certificates must already be configured.
+
+The local `deploy_docker.ps1` contains `$RemoteUser` and `$SshPassword`, so it runs without credential prompts. It is excluded from Git and the Docker build context. The repository contains only `deploy_docker.example.ps1`, with a password placeholder. On a new checkout, copy the example to `deploy_docker.ps1` and set the credentials there. There is no separate deployment `.py` file: the PowerShell script embeds its SSH helper and uses the project's existing virtual environment and SSH/SCP libraries. No Linux packages are installed.
+
+Optional switches:
+
+```powershell
+.\deploy_docker.ps1 -CheckOnly   # Check SSH/sudo and server prerequisites without changing files or containers.
+.\deploy_docker.ps1 -SkipBuild   # Save and deploy the existing local latest image.
+.\deploy_docker.ps1 -RemoteOnly  # Use compose.remote.yaml for servers without local Tango folders.
+```
+
+`-Server`, `-SshPort` and `-RemoteDirectory` can override the default destination. The archive is kept as `logcomparator.tar` in both the local project and the server project folder. Docker always uses the single `latest` tag; release versions remain Git tags.
+
+### Manual build and transfer (alternative)
+
 **1. Build the image on Windows.**
 
 Start Docker Desktop in **Linux containers** mode. Open PowerShell in the project

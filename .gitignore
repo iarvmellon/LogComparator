@@ -17,3 +17,7 @@ certs/
 
 # Generated Docker image archives.
 logcomparator.tar
+
+deploy_docker.ps1
+
+.docker-export-*
