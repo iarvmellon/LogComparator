@@ -692,3 +692,5 @@ The bottom status line shows **System CPU** (overall system utilization, 0-100%)
 The TransUID column displays only identifiers present in the logs. Audit-only logons without a transUID leave this cell blank. Generated `LOGON-OPN...` keys are retained internally for selection, pairing, opening and export, and are not presented as real transaction identifiers. Results reports and transaction summaries follow the same rule.
 
 RC_SPDH and RC_ISO show the code first, followed by its description, for example `(000) Approved` or `(05) Do not honor`. Existing response-code emphasis and consistency colors are unchanged.
+
+The transaction list uses virtual scrolling for large results. Scroll to the bottom to view the last transactions on the current page; the list retains its position without wrapping back to the first rows. Table styling preserves the virtual-scroll spacer heights.

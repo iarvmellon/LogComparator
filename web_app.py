@@ -311,12 +311,12 @@ html, body { height:100%; overflow:hidden; }
 .q-btn { border-radius:0; text-transform:none; }
 .q-table__container { border:1px solid #aaa; border-radius:0; width:100%; }
 .q-table th { font-weight:bold; background:white; }
-.q-table th, .q-table td { font-size:var(--log-font,10px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
+.q-table th, .q-table tbody:not(.q-virtual-scroll__padding) td { font-size:var(--log-font,10px); padding:3px 8px!important; height:auto!important; line-height:1.4; white-space:nowrap; }
 .log-table thead th { font-size:calc(var(--log-font,10px) + 2px); font-weight:800; }
-.log-table th, .log-table td { box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; }
-.log-table th:first-child, .log-table td:first-child { width:44px!important; min-width:44px!important; max-width:44px!important; padding:0 6px!important; text-align:center; }
-.log-table th:first-child .q-checkbox, .log-table td:first-child .q-checkbox { vertical-align:middle; }
-.log-table th:first-child .q-checkbox__inner, .log-table td:first-child .q-checkbox__inner { font-size:32px!important; }
+.log-table th, .log-table tbody:not(.q-virtual-scroll__padding) td { box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; }
+.log-table th:first-child, .log-table tbody:not(.q-virtual-scroll__padding) td:first-child { width:44px!important; min-width:44px!important; max-width:44px!important; padding:0 6px!important; text-align:center; }
+.log-table th:first-child .q-checkbox, .log-table tbody:not(.q-virtual-scroll__padding) td:first-child .q-checkbox { vertical-align:middle; }
+.log-table th:first-child .q-checkbox__inner, .log-table tbody:not(.q-virtual-scroll__padding) td:first-child .q-checkbox__inner { font-size:32px!important; }
 
 .q-table tbody tr.problem { background:#ff9999; }
 .q-table tbody tr.warning { background:#fff2b3; }
