@@ -182,6 +182,8 @@ Consistency viewer options separately.
 Click a row or its first-column checkbox to select or deselect it. Selected
 rows have a blue outline and keep their result color. You can select several rows.
 
+- **File > Export TRXs** exports individual transaction logs, using the existing export behavior.
+- **File > Export Results** downloads a standalone HTML report of the current filtered list, in its current sort order, across all pages. It includes only visible columns, selection marks, consistency colors and response-code styling. Long Possible problem descriptions remain available on hover. The top of the report records Generated files, Byte/Data, Audit blocks, selected date, Bank/Acquirer, live update, time range/timezone, enabled Consistency viewer options and active filters. It exports the list without generating individual transaction logs.
 - **Open** opens selected transaction logs in separate browser tabs.
   You can also click a **TransUID** or double-click a row to open its log.
 - **Download log**, in the transaction tab, saves the complete log.
@@ -249,7 +251,7 @@ If the generated logs are identical, the page says so.
 
 | Menu | Available actions |
 | --- | --- |
-| **File** | Import local logs, Import remote logs (UAT), Export, and Settings. |
+| **File** | Import local logs, Import remote logs (UAT), Export TRXs, Export Results, and Settings. |
 | **Edit** | Clear text filters, select all visible transactions, or clear the selection. |
 | **View > Columns / Filters** | Show or hide columns and their corresponding text filters. Hiding a filter also clears its value. Possible problem stays available. |
 | **View > Increase / Decrease font size** | Make the transaction list text larger or smaller. |

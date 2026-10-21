@@ -30,7 +30,7 @@ from logcomparator_ui.diff_view import register_assets
 
 import log_core as core
 from web_services import (COLUMNS, comparison_diff, export_logs,
-                          filter_rows, load_logs, publish_exports)
+                          filter_rows, load_logs, publish_exports, render_results_report)
 from web_services import list_local_source_files, LocalAuditJob, source_signature, SourceWatcher
 from remote_logs import (uat_connection, RemoteImportRequest, UnknownHostKey, list_remote_sources,
                          audit_date, banks_for_audits, names_for_bank, read_remote_files as download_audits, read_remote_logs as download_tango_logs,
@@ -768,6 +768,36 @@ def index():
             status.set_text(f'Exported {len(paths)} transaction(s). Saved to {saved_to}')
         await perform(action)
 
+    async def export_results():
+        async def action():
+            if loaded is None or loaded.bank != bank.value or table.props.get('loading'):
+                raise ValueError('Wait for a bank/acquirer to finish loading first.')
+            snapshot = loaded
+            source_rows = table.rows
+            columns = [(key, label) for key, label in COLUMNS if key in table.props['visible-columns']]
+            settings = [
+                ('Version', core.APP_BUILD_DESCRIBE),
+                ('Generated files', protocol.value),
+                ('Byte/Data', 'Include' if byte_data.value else 'Exclude'),
+                ('Audit blocks', ', '.join(name for name, control in [('Tango Internal', internal), ('Tango -> Network', outbound), ('Network -> Tango', inbound)] if control.value) or 'None'),
+                ('Selected date', source_day or snapshot.selected_date),
+                ('Bank/Acquirer', bank.value),
+                ('Live update', 'Active' if live_enabled.value else 'Inactive'),
+                ('From', from_datetime.value or 'Unrestricted'),
+                ('To', to_datetime.value or 'Unrestricted'),
+                ('Timezone', timezone.value),
+                ('Consistency viewer', ', '.join(control.text for control in viewer_filters.values() if control.value) or 'None'),
+                ('Active filters', '\n'.join(f'{dict(COLUMNS).get(key, key)}: {control.value}' for key, control in filters.items() if control.value) or 'None'),
+            ]
+            selected_uids = [row['transuid'] for row in table.selected]
+            rows = await table.get_filtered_sorted_rows(timeout=15)
+            if loaded is not snapshot or table.rows is not source_rows:
+                raise ValueError('The results changed during export. Please export again.')
+            document = await run.io_bound(render_results_report, rows, columns, settings, selected_uids)
+            ui.download.content(document.encode('utf-8'), f'LogComparator-Results-{snapshot.selected_date}.html', media_type='text/html')
+            status.set_text(f'Exported results: {len(rows)} transactions.')
+        await perform(action)
+
     def clear_filters():
         for control in filters.values():
             control.set_value('')
@@ -1096,7 +1126,8 @@ def index():
                     if label == 'File':
                         ui.menu_item('Import local logs', on_click=import_dialog).mark('import-menu')
                         ui.menu_item('Import remote logs (UAT)', on_click=remote_import_dialog).mark('remote-import-menu')
-                        ui.menu_item('Export', on_click=export_action)
+                        ui.menu_item('Export TRXs', on_click=export_action).mark('export-trxs-menu')
+                        ui.menu_item('Export Results', on_click=export_results).mark('export-results-menu')
                         ui.menu_item('Settings', on_click=settings_dialog).mark('settings-menu')
                     elif label == 'Edit':
                         ui.menu_item('Clear filters', on_click=clear_filters)

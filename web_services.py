@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
 import queue
+import html
 import threading
 import shutil
 import tempfile
@@ -453,3 +454,33 @@ def comparison_diff(left: str, right: str, left_name: str, right_name: str, *, c
         return [line + '\n' for line in text.splitlines()]
     return ''.join(difflib.unified_diff(lines(left), lines(right), fromfile=left_name,
                                         tofile=right_name, n=context))
+
+
+def render_results_report(rows, columns, settings, selected_uids=()):
+    """Render the visible results snapshot without reading individual transaction logs."""
+    escape = lambda value: html.escape(str(value if value is not None else ''))
+    selected = set(selected_uids)
+    metadata = ''.join(f'<dt>{escape(label)}</dt><dd>{escape(value)}</dd>' for label, value in settings)
+    headers = '<th>Selected</th>' + ''.join(f'<th>{escape(label)}</th>' for _, label in columns)
+    body = []
+    for row in rows:
+        severity = row.get('severity', '')
+        color = {'approved': '#c8f7c5', 'warning': '#fff2b3', 'problem': '#ff9999'}.get(severity, '#fff')
+        cells = ['<td>' + ('&#9745;' if row.get('transuid') in selected else '&#9744;') + '</td>']
+        for key, _ in columns:
+            value = str(row.get(key) or '')
+            display = value[:97] + '...' if key == 'possibleproblem' and len(value) > 100 else value
+            alert = key in ('responsecodeiso', 'responsecodespdh') and row.get(key + '_alert')
+            style = ' style="color:#b00020;font-weight:700"' if alert else ''
+            cells.append(f'<td{style} title="{escape(value)}">{escape(display)}</td>')
+        body.append(f'<tr style="background:{color}">' + ''.join(cells) + '</tr>')
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>LogComparator - Results</title><style>'
+            'body{font:13px Arial,sans-serif;margin:20px;color:#151515;background:white}'
+            'dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 20px}'
+            'dt{font-weight:bold}dd{margin:0;white-space:pre-wrap}table{border-collapse:collapse;font-size:11px}'
+            'th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;white-space:nowrap}'
+            'th{background:#eee;font-weight:bold}</style></head><body><h1>LogComparator - Results</h1>'
+            '<dl>' + metadata + '</dl><p>Transactions: ' + str(len(rows)) + '</p>'
+            '<table><thead><tr>' + headers + '</tr></thead><tbody>' + ''.join(body) + '</tbody></table></body></html>')
