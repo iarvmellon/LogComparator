@@ -68,6 +68,12 @@ class LogonWithoutUidTests(unittest.TestCase):
                 (folder / 'audit.OPNBISOBKT01.2026-10-14').write_text(content)
                 loaded = load_logs(folder, 'AKTIF/BKT', '2026-10-14')
                 self.assertEqual(len(loaded.rows), 1)
+                self.assertEqual(loaded.rows[0]['transuid_display'], '')
+                self.assertTrue(loaded.rows[0]['transuid'].startswith('LOGON-'))
+                from web_services import filter_rows, render_results_report
+                self.assertEqual(filter_rows(loaded.rows, {'transuid': 'LOGON-'}), [])
+                report = render_results_report(loaded.rows, [('transuid', 'TransUID')], [])
+                self.assertNotIn(loaded.rows[0]['transuid'], report)
                 self.assertEqual(loaded.rows[0]['severity'], 'approved')
                 self.assertEqual(loaded.rows[0]['possibleproblem'], '')
 

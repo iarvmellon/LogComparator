@@ -386,13 +386,13 @@ def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, 
             rrn = core.select_rrn(transaction)
             rows.append(dict(
                 datetime=timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if timestamp else '',
-                transuid=uid, stan=core.select_identifier(transaction, 'stan'),
+                transuid=uid, transuid_display=core.display_trans_uid(uid), stan=core.select_identifier(transaction, 'stan'),
                 rrn='' if rrn == 'NO_RRN' else rrn,
                 authcode=core.select_identifier(transaction, 'authcode'),
                 sequencenumber=core.select_identifier(transaction, 'sequence_number'),
                 transactiontype=core.select_transaction_type(transaction),
                 tid=core.select_first(transaction.tids), mid=core.select_first(transaction.mids),
-                amt=core.select_amount_display(transaction), responsecodespdh=spdh, responsecodeiso=iso,
+                amt=core.select_amount_display(transaction), responsecodespdh=core.display_response_code(spdh), responsecodeiso=core.display_response_code(iso),
                 responsecodespdh_alert=not spdh.startswith(("Approved(", "Unknown")),
                 responsecodeiso_alert=not iso.startswith(("Approved(", "Unknown")),
                 possibleproblem=problem_display_text(raw_problem),
@@ -414,7 +414,7 @@ def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, 
 def filter_rows(rows: list[dict], filters: dict[str, str], minimum: str = '', maximum: str = '', offset: int = 0) -> list[dict]:
     result = []
     for row in rows:
-        if any(str(value).strip().casefold() not in str(row.get(key, '')).casefold()
+        if any(str(value).strip().casefold() not in str(row.get('transuid_display', core.display_trans_uid(row.get('transuid', ''))) if key == 'transuid' else row.get(key, '')).casefold()
                for key, value in filters.items() if value):
             continue
         displayed = dict(row)
@@ -468,7 +468,7 @@ def render_results_report(rows, columns, settings, selected_uids=()):
         color = {'approved': '#c8f7c5', 'warning': '#fff2b3', 'problem': '#ff9999'}.get(severity, '#fff')
         cells = ['<td>' + ('&#9745;' if row.get('transuid') in selected else '&#9744;') + '</td>']
         for key, _ in columns:
-            value = str(row.get(key) or '')
+            value = str(row.get('transuid_display', core.display_trans_uid(row.get('transuid', ''))) if key == 'transuid' else row.get(key) or '')
             display = value[:97] + '...' if key == 'possibleproblem' and len(value) > 100 else value
             alert = key in ('responsecodeiso', 'responsecodespdh') and row.get(key + '_alert')
             style = ' style="color:#b00020;font-weight:700"' if alert else ''

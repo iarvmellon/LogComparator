@@ -9,6 +9,12 @@ from testing.test_echo_success import echo
 
 
 class ValidationStatusTests(unittest.TestCase):
+    def test_response_code_display_has_code_first(self):
+        self.assertEqual(core.display_response_code('Approved(000)'), '(000) Approved')
+        self.assertEqual(core.display_response_code('Approved(00)'), '(00) Approved')
+        self.assertEqual(core.display_response_code('Do not honor(05)'), '(05) Do not honor')
+        self.assertEqual(core.display_response_code('Unknown'), 'Unknown')
+
     def test_business_codes_never_determine_validation_success(self):
         for spdh in ('Approved(000)', 'Declined(050)', 'Unknown', ''):
             for iso in ('Approved(00)', 'Approved(000)', 'Declined(05)', 'Unknown', ''):
@@ -43,7 +49,7 @@ class ValidationStatusTests(unittest.TestCase):
                 if label == 'approved_000':
                     self.assertFalse(loaded.rows[0]['responsecodeiso_alert'])
                 if label == 'declined':
-                    self.assertNotEqual(loaded.rows[0]['responsecodeiso'], 'Approved(00)')
+                    self.assertNotEqual(loaded.rows[0]['responsecodeiso'], '(00) Approved')
                     self.assertIn('(51)', loaded.rows[0]['responsecodeiso'])
                     self.assertTrue(loaded.rows[0]['responsecodeiso_alert'])
                     self.assertFalse(loaded.rows[0]['responsecodespdh_alert'])

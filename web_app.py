@@ -92,7 +92,7 @@ def readme_page():
 @app.get('/transaction/{source_id}', response_class=HTMLResponse)
 def transaction_page(source_id: str, uid: str):
     """A standalone snapshot viewer, independent of NiceGUI's reconnect lifecycle."""
-    title = html.escape(f'LogComparator - {uid}')
+    title = html.escape(f'LogComparator - {core.display_trans_uid(uid) or "Transaction"}')
     data_url = '../transaction-data/' + quote(source_id, safe='') + '?' + urlencode({'uid': uid})
     script_url = json.dumps(data_url).replace('<', '\\u003c')
     document = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -761,7 +761,7 @@ def index():
                 with ui.dialog() as links, ui.card():
                     ui.label('Open selected logs').classes('text-lg')
                     for row in rows:
-                        ui.link(row['transuid'], row['preview_url'], new_tab=True)
+                        ui.link(row.get('transuid_display', row['transuid']) or 'Transaction without transUID', row['preview_url'], new_tab=True)
                     ui.button('Close', on_click=links.close)
                 links.open()
                 return
@@ -1227,7 +1227,7 @@ def index():
             filters[key] = ui.input(label, on_change=refresh).props('outlined dense debounce=350').classes('filter-input')
         filters['possibleproblem'] = ui.input('Possible problem', on_change=refresh).props('outlined dense debounce=350 clearable').classes('problem-filter').mark('possible-problem-filter')
 
-    table = ui.table(columns=[dict(name=key, label=label, field=key, align='left', sortable=True) for key, label in COLUMNS],
+    table = ui.table(columns=[dict(name=key, label=label, field='transuid_display' if key == 'transuid' else key, align='left', sortable=True) for key, label in COLUMNS],
                      rows=[], row_key='transuid', selection='multiple', pagination=100,
                      on_select=selection_changed)
     table.classes('log-table').props('dense flat bordered separator=cell virtual-scroll')

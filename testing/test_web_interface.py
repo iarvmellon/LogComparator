@@ -15,7 +15,7 @@ def source_fixture(folder):
                 'Process name : OPNBISOBKT01\n'
                 f"Flow dir : {'TANGO-->NETWORK' if flow == 'request' else 'NETWORK-->TANGO'}\n"
                 f'Flow type : {flow}, ref: {ref}\nMessage type : out logon\n'
-                f'msgId : asc<{mti}>\nnetworkManageCode : asc<001>\nauditNumber : asc<000115>\n'
+                f'msgId : asc<{mti}>\nnetworkManageCode : asc<001>\nauditNumber : asc<{115 if ref == "123" else 116:06d}>\n'
                 'responseCode : asc<00>\n')
     (folder / 'tango.log.2026-10-14').write_text('', encoding='utf-8')
     (folder / 'audit.OPNBISOBKT01.2026-10-14').write_text(
@@ -172,7 +172,7 @@ class WebServicesTests(unittest.TestCase):
             self.assertEqual(loaded.selected_date, '2026-10-14')
             self.assertEqual(len(loaded.rows), 2)
             self.assertIn('LOGON', loaded.rows[0]['transactiontype'])
-            rows = filter_rows(loaded.rows, {'transuid': loaded.rows[0]['transuid']})
+            rows = filter_rows(loaded.rows, {'stan': loaded.rows[0]['stan']})
             self.assertEqual(len(rows), 1)
             shifted = filter_rows(rows, {}, '2026-10-14 08:47:58', '2026-10-14 08:47:58', 2)
             self.assertEqual(len(shifted), 1)
@@ -540,9 +540,13 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(table.rows), 2)
                 with user:
                     inputs['TransUID'].set_value(table.rows[0]['transuid'])
-                self.assertEqual(len(table.rows), 1)
+                self.assertEqual(len(table.rows), 0)
                 with user:
                     inputs['TransUID'].set_value('')
+                    inputs['STAN'].set_value(table.rows[0]['stan'])
+                self.assertEqual(len(table.rows), 1)
+                with user:
+                    inputs['STAN'].set_value('')
                     table.selected = []
                 user.find(ui.table).trigger('selection', {'added': True, 'rows': list(table.rows), 'keys': [row['transuid'] for row in table.rows]})
                 compare = next(iter(user.find(kind=ui.button, content='Compare').elements))
@@ -578,7 +582,8 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 preview = await user.http_client.get(table.rows[0]['preview_url'])
                 self.assertEqual(preview.status_code, 200)
                 self.assertIn('Loading transaction log...', preview.text)
-                self.assertIn(table.rows[0]['transuid'], preview.text)
+                self.assertNotIn('LogComparator - ' + table.rows[0]['transuid'], preview.text)
+                self.assertIn('LogComparator - Transaction', preview.text)
                 self.assertNotIn(table.rows[1]['transuid'], preview.text)
                 user.find(kind=ui.button, content='Export').click()
                 response = await user.download.next(timeout=10)

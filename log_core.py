@@ -835,6 +835,17 @@ def logon_exchange_uid(text: str, process: str, flow: str, mtis: list[str]) -> s
     return f"LOGON-{process}-{timestamp:%Y%m%d}-{reference.group(1)}"
 
 
+def display_trans_uid(uid: str) -> str:
+    """Keep generated audit-only logon keys out of the displayed transUID."""
+    return '' if re.fullmatch(r'LOGON-OPN.+-\d{8}-\d+', uid) else uid
+
+
+def display_response_code(value: str) -> str:
+    """Show the numeric response code before its description in result columns."""
+    match = re.fullmatch(r'(.+?)\((\d+)\)', value)
+    return f'({match[2]}) {match[1].strip()}' if match else value
+
+
 def transaction_matches_bank(transaction: Transaction, bank: str) -> bool:
     expected_ids = BANK_ACQUIRER_IDS.get(bank, set())
     if bank in {"AKTIF/BKT", "AKTIF/BKTKOS"}:
@@ -1607,7 +1618,7 @@ def format_transaction_summary(
         SECTION_SEPARATOR,
         "TRANSACTION SUMMARY",
         SECTION_SEPARATOR,
-        field_line("transUId", transaction.trans_uid),
+        field_line("transUId", display_trans_uid(transaction.trans_uid) or "Not available"),
     ]
     if rrn != "NO_RRN":
         lines.append(field_line("RRN", rrn))
