@@ -17,7 +17,7 @@ COPY pyproject.toml requirements.txt ./
 COPY logcomparator_ui/ ./logcomparator_ui/
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY main.py windows_runtime.py web_app.py web_services.py gui_services.py remote_logs.py log_config.py log_core.py source_memory.py web_tls.py create_https_certificate.py README.md ./
+COPY main.py windows_runtime.py web_app.py web_services.py gui_services.py remote_logs.py log_config.py log_core.py source_memory.py web_tls.py create_https_certificate.py README.md Log_Comparator_Web_Interface_Rectangles.drawio.png ./
 COPY diagnostic_common.py transaction_checks.py iso_checks.py spdh_checks.py tango_checks.py emv_checks.py ./
 
 ARG BUILD_DESCRIBE=container
