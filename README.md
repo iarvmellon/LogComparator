@@ -182,7 +182,8 @@ Consistency viewer options separately.
 Click a row or its first-column checkbox to select or deselect it. Selected
 rows have a blue outline and keep their result color. You can select several rows.
 
-- **File > Export TRXs** exports individual transaction logs, using the existing export behavior.
+- **File > Export all TRXs** exports individual logs for every transaction in the current filtered list, across all pages, regardless of row selection.
+- **File > Export selected TRXs** exports individual logs only for the selected transactions. Select at least one row first.
 - **File > Export Results** opens a standalone HTML report in a new browser tab of the current filtered list, in its current sort order, across all pages. It includes only visible columns, selection marks, consistency colors and response-code styling. Long Possible problem descriptions remain available on hover. The top of the report records Generated files, Byte/Data, Audit blocks, selected date, Bank/Acquirer, live update, time range/timezone, enabled Consistency viewer options and active filters. It exports the list without generating individual transaction logs.
 - **Open** opens selected transaction logs in separate browser tabs.
   You can also click a **TransUID** or double-click a row to open its log.
@@ -204,7 +205,7 @@ Transaction tabs include built-in log highlighting: responseCode, resultCode, re
 Large transaction logs initially show the first 256 KiB so the tab can display text quickly. **Load more** adds the next part; **Load full log** loads the rest in small steps. **Download log** always saves the complete file. TANGO source searches scan byte chunks and decode only matching lines, rather than processing every line in Python.
 
 An opened transaction log is a snapshot. It does not refresh automatically when
-the main list updates. Right-click a transaction row or its TransUID link for **Open** and **Export**. **Compare** appears only when exactly two transactions are selected and compares that selected pair.
+the main list updates. Right-click a transaction row or its TransUID link for **Open** and **Export**. **Compare** appears only when exactly two transactions are selected and compares that selected pair. The context menu checks the current selection each time it opens, including after selecting or deselecting rows.
 
 ## Exporting logs
 
@@ -251,11 +252,11 @@ If the generated logs are identical, the page says so.
 
 | Menu | Available actions |
 | --- | --- |
-| **File** | Import local logs, Import remote logs (UAT), Export TRXs, Export Results, and Settings. |
+| **File** | Import local logs, Import remote logs (UAT), Export all TRXs, Export selected TRXs, Export Results, and Settings. |
 | **Edit** | Clear text filters, select all visible transactions, or clear the selection. |
 | **View > Columns / Filters** | Show or hide columns and their corresponding text filters. Hiding a filter also clears its value. Possible problem stays available. |
 | **View > Increase / Decrease font size** | Make the transaction list text larger or smaller. |
-| **Tools** | Export options and the Open, Export, and Compare actions. |
+| **Tools** | Export options and the Open and Compare actions. |
 | **Help > README** | Open this guide in a separate browser tab. |
 | **Help > About** | View the application version and author information. |
 

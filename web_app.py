@@ -743,7 +743,11 @@ def index():
                 raise ValueError('Select exactly two transactions to compare.')
             if mode == 'open' and not selection:
                 raise ValueError('Select one or more transactions to open.')
-            rows = selection or list(table.rows)
+            if mode == 'download_selected' and not selection:
+                raise ValueError('Select one or more transactions to export.')
+            rows = list(table.rows) if mode == 'download_all' else selection if mode == 'download_selected' else selection or list(table.rows)
+            if not rows:
+                raise ValueError('No transactions to export.')
             if mode == 'compare':
                 update_actions()
                 ui.navigate.to(comparison_url, new_tab=True)
@@ -763,7 +767,7 @@ def index():
             status.set_text(f'Exporting {len(rows)} transaction(s)…')
             paths = await run.io_bound(export_logs, loaded, [row['transuid'] for row in rows], output, **options())
             saved_to = await run.io_bound(publish_exports, paths, loaded, session_settings.output)
-            if mode == 'download':
+            if mode in ('download', 'download_all', 'download_selected'):
                 if len(paths) == 1:
                     ui.download.file(paths[0])
                 else:
@@ -1142,7 +1146,8 @@ def index():
                     if label == 'File':
                         ui.menu_item('Import local logs', on_click=import_dialog).mark('import-menu')
                         ui.menu_item('Import remote logs (UAT)', on_click=remote_import_dialog).mark('remote-import-menu')
-                        ui.menu_item('Export TRXs', on_click=export_action).mark('export-trxs-menu')
+                        ui.menu_item('Export all TRXs', on_click=lambda: export_action('download_all')).mark('export-trxs-menu')
+                        ui.menu_item('Export selected TRXs', on_click=lambda: export_action('download_selected')).mark('export-selected-trxs-menu')
                         ui.menu_item('Export Results', on_click=export_results).mark('export-results-menu')
                         ui.menu_item('Settings', on_click=settings_dialog).mark('settings-menu')
                     elif label == 'Edit':
@@ -1156,7 +1161,6 @@ def index():
                     elif label == 'Tools':
                         ui.menu_item('Export options', on_click=export_options_dialog).mark('export-options-menu')
                         tools_open = ui.menu_item('Open', on_click=toolbar_open)
-                        ui.menu_item('Export', on_click=export_action)
                         tools_compare = ui.menu_item('Compare', on_click=toolbar_compare)
                     else:
                         ui.menu_item('README', on_click=lambda: ui.navigate.to('/readme', new_tab=True)).mark('help-readme')
@@ -1270,8 +1274,11 @@ def index():
         <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @click="props.selected = !props.selected" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
           <q-td auto-width @click.stop><q-checkbox dense size="sm" v-model="props.selected" aria-label="Select transaction" /></q-td>
           <q-td v-for="col in props.cols" :key="col.name" :props="props" :style="col.style" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else :class="{'response-code-alert': (col.name === 'responsecodeiso' &amp;&amp; props.row.responsecodeiso_alert) || (col.name === 'responsecodespdh' &amp;&amp; props.row.responsecodespdh_alert)}">{{ col.value }}</span></q-td>
-          <q-menu context-menu touch-position><q-list style="min-width:140px">
-            <q-item v-for="action in (($parent.$props.selected || $parent.$attrs.selected || []).length === 2 ? ['Open', 'Export', 'Compare'] : ['Open', 'Export'])" :key="action"
+          <q-menu context-menu touch-position @before-show="event => {
+            const opener = event.target.ownerDocument.querySelector('[data-transaction-opener]');
+            props.row.contextCompare = JSON.parse(opener?.getAttribute('data-open-urls') || '[]').length === 2;
+          }"><q-list style="min-width:140px">
+            <q-item v-for="action in (props.row.contextCompare ? ['Open', 'Export', 'Compare'] : ['Open', 'Export'])" :key="action"
               :tag="action === 'Export' ? 'div' : 'a'"
               :href="action === 'Open' ? props.row.preview_url : '#'"
               target="_blank" rel="noopener" clickable v-close-popup

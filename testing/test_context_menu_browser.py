@@ -67,15 +67,16 @@ try {
     rowKey: 'transuid', selection: 'multiple', selected: selected.value,
     'onUpdate:selected': value => selected.value = value,
     'onContext-action': event => events.push(event),
-  }, {body: props => proxyMode.value ? Vue.h(ProxySlot, {props, selected: selected.value, 'onContext-action': event => events.push(event)}) : Vue.h(Slot, {props})});}});
+  }, {body: props => proxyMode.value ? Vue.h(ProxySlot, {props, ...(proxyMode.value === true ? {selected: selected.value} : {}), 'onContext-action': event => events.push(event)}) : Vue.h(Slot, {props})});}});
   app.config.errorHandler = error => errors.push(String(error));
   app.use(window.Quasar);
   app.mount('#app');
   const pause = () => new Promise(resolve => setTimeout(resolve, 300));
-  for (const mode of [false, true]) {
+  for (const mode of [false, true, 'no-selection-prop']) {
    proxyMode.value = mode;
    for (const count of [0, 1, 2, 3, 2, 0]) {
     selected.value = rows.slice(0, count);
+    document.querySelector('[data-transaction-opener]').setAttribute('data-open-urls', JSON.stringify(selected.value.map(row => row.preview_url)));
     await Vue.nextTick();
     document.querySelector(count % 2 ? 'tbody tr a' : 'tbody tr').dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true, cancelable: true, button: 2, clientX: 80, clientY: 80,
