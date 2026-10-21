@@ -5,6 +5,8 @@ in production. By reviewing transaction flows, highlighting possible problems,
 and comparing logs, it can support checks that transactions behave as expected
 after the upgrade.
 
+The application primarily checks message and transaction-flow consistency against the specifications covered by its implemented checks. **Consistent** means that no inconsistencies were detected; it does not mean that the payment was approved or completed successfully. **Possible consistent** indicates possible inconsistencies, and **Inconsistent** indicates definite inconsistencies. Response codes remain visible as separate business-outcome information.
+
 LogComparator helps you find and check transactions in TANGO logs. It reads
 TANGO log files and PTMS/SPDH and OPN/ISO audit files, brings together the
 messages that belong to each transaction, and displays the results in a table.
@@ -100,10 +102,12 @@ any findings from the checks.
 
 | Appearance | Meaning |
 | --- | --- |
-| Green | Classified as successful. |
-| Yellow | A warning needs review. |
-| Red | A problem or error was found. |
-| No status color | Not classified into one of the above categories. |
+| Green / Consistent | No inconsistencies detected by the implemented specification checks. |
+| Yellow / Possible consistent | A possible inconsistency needs review. |
+| Red / Inconsistent | A definite inconsistency was detected. |
+| No status color / Unknown | No recognized ISO or SPDH messages were available to validate. |
+
+RC_ISO and RC_SPDH show the business outcome and do not determine the row color. Approved response codes (including ISO `00` and `000`) and Unknown values use normal text. Other response codes are displayed in bold red text in their own cells. For example, an insufficient-funds decline can be green when its messages are consistent; an Approved response can be red when a definite inconsistency is found. In exported summaries, **Response status** describes the business outcome, independently of the list validation result.
 
 **Possible problem** describes the finding. The table shows up to 100 characters;
 hover over the field to read the complete description.
@@ -129,18 +133,18 @@ Click a time field or its calendar icon, choose a date and time, then click
 **From must be before To** means the start is later than the end; correct one
 of the two values.
 
-### Selection viewer
+### Consistency viewer
 
 Choose which result categories should be visible:
 
 | Option | Shows |
 | --- | --- |
-| **Warnings** | Transactions with warnings. |
-| **Errors** | Transactions with problems or errors. |
-| **Succeeded** | Transactions classified as successful. |
+| **Consistent** | Checked transactions with no detected inconsistencies, regardless of response codes. |
+| **Possible consistent** | Transactions with possible inconsistencies that need review. |
+| **Inconsistent** | Transactions with definite inconsistencies. |
 | **Unknown** | Transactions without one of the above classifications. |
 
-An Echo with only ISO request and response messages is classified as successful (green) when the exchange matches and the ISO response code is `000` or `00` (Approved). Existing diagnostic errors or warnings retain their priority.
+The option backgrounds match their categories: **Consistent** is green, **Possible consistent** is yellow, **Inconsistent** is red, and **Unknown** is white.
 
 All four options start enabled. Uncheck a category to hide its rows.
 These checkboxes filter the list; they do not select rows for Open or Export.
@@ -169,7 +173,7 @@ For example, enter a **TID** and a **TransactionType** to see only matching
 transactions from that terminal. For amounts, use the format shown in **AMT**.
 
 **Edit > Clear filters** clears the text filters. Change the time range and
-Selection viewer options separately.
+Consistency viewer options separately.
 
 ## Selecting and opening transactions
 
@@ -194,7 +198,7 @@ When opening several transactions, their tabs are requested directly from your c
 Large transaction logs initially show the first 256 KiB so the tab can display text quickly. **Load more** adds the next part; **Load full log** loads the rest in small steps. **Download log** always saves the complete file. TANGO source searches scan byte chunks and decode only matching lines, rather than processing every line in Python.
 
 An opened transaction log is a snapshot. It does not refresh automatically when
-the main list updates. Right-click a row for **Open**, **Export**, and **Compare**.
+the main list updates. Right-click a transaction row or its TransUID link for **Open** and **Export**. **Compare** appears only when exactly two transactions are selected and compares that selected pair.
 
 ## Exporting logs
 

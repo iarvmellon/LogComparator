@@ -45,13 +45,14 @@ def problem_display_text(problem: str) -> str:
 
 
 def problem_row_tag(problem: str, spdh_rc: str, iso_rc: str, heartbeat: bool = False,
-                    protocol_only_success: bool = False) -> str:
+                    protocol_only_success: bool = False, *, checked: bool = True) -> str:
     parts = [part for part in problem.split('; ') if part]
     if any(not part.startswith('warning: ') for part in parts):
         return 'problem'
     if parts:
         return 'warning'
-    return 'approved' if heartbeat or protocol_only_success or (spdh_rc == 'Approved(000)' and iso_rc == 'Approved(00)') else ''
+    # Success describes validation findings, never the business response code.
+    return 'approved' if checked else ''
 
 
 def check_original_transactions(

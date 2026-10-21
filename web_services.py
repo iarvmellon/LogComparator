@@ -18,7 +18,7 @@ import source_memory
 import log_core as core
 from diagnostic_common import problem_display_text, problem_row_tag
 from tango_checks import scan_tango_diagnostics
-from transaction_checks import build_problem_columns, is_successful_protocol_only, successful_local_reversal_uids
+from transaction_checks import build_problem_columns
 
 # The original parser has process-wide caches. Serialize access across browser tabs.
 CORE_LOCK = RLock()
@@ -369,7 +369,6 @@ def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, 
         findings = scan_tango_diagnostics(logs, set(transactions), progress=lambda *args: checkpoint())
         problems = build_problem_columns(transactions.values(), findings, checkpoint=checkpoint)
         checkpoint()
-        local_reversals = successful_local_reversal_uids(transactions.values())
         rows = []
         for row_index, transaction in enumerate(sorted(transactions.values(), key=lambda t: t.first_index)):
             if row_index % 256 == 0:
@@ -379,8 +378,10 @@ def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, 
             uid = transaction.trans_uid
             timestamp = transaction.request_timestamp or transaction.first_timestamp
             raw_problem = '; '.join(dict.fromkeys(part for column in problems[uid] for part in column.split('; ') if part))
-            spdh = core.response_code_component(core.select_response_code(transaction.spdh_response_codes), core.SPDH_RC_NAMES)
-            iso = core.response_code_component(core.select_response_code(transaction.iso_response_codes), core.ISO_RC_NAMES)
+            spdh_code = core.select_response_code(transaction.spdh_response_codes)
+            iso_code = core.select_response_code(transaction.iso_response_codes)
+            spdh = core.response_code_component(spdh_code, core.SPDH_RC_NAMES)
+            iso = core.response_code_component(iso_code, core.ISO_RC_NAMES)
             rrn = core.select_rrn(transaction)
             rows.append(dict(
                 datetime=timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if timestamp else '',
@@ -391,9 +392,11 @@ def _load_logs(folder: Path, bank: str, selected_date: str = '', progress=None, 
                 transactiontype=core.select_transaction_type(transaction),
                 tid=core.select_first(transaction.tids), mid=core.select_first(transaction.mids),
                 amt=core.select_amount_display(transaction), responsecodespdh=spdh, responsecodeiso=iso,
+                responsecodespdh_alert=not spdh.startswith(("Approved(", "Unknown")),
+                responsecodeiso_alert=not iso.startswith(("Approved(", "Unknown")),
                 possibleproblem=problem_display_text(raw_problem),
-                severity=problem_row_tag(raw_problem, spdh, iso, protocol_only_success=(
-                    is_successful_protocol_only(transaction) or uid in local_reversals)),
+                severity=problem_row_tag(raw_problem, spdh, iso,
+                    checked=bool(transaction.iso_messages or transaction.spdh_messages)),
             ))
         result = LoadedLogs(folder, bank, selected_date, audits, logs, rows, audit_folder)
         with READY_LOCK:

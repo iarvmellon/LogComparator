@@ -486,7 +486,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('<h1>LogComparator</h1>', guide.text)
                 self.assertIn('Import local logs', guide.text)
                 self.assertIn('Import remote logs', guide.text)
-                self.assertIn('Selection viewer', guide.text)
+                self.assertIn('Consistency viewer', guide.text)
                 self.assertIn('<table>', guide.text)
 
                 selects = {element.props.get('label'): element for element in user.find(ui.select).elements}

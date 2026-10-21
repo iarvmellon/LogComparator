@@ -1546,7 +1546,7 @@ def transaction_status(iso_rc: str, spdh_rc: str) -> str:
     known_codes = [code for code in (iso_rc, spdh_rc) if code != "NA"]
     if not known_codes:
         return "UNKNOWN"
-    if iso_rc not in {"NA", "00"} or spdh_rc not in {"NA", "000"}:
+    if iso_rc not in {"NA", "00", "000"} or spdh_rc not in {"NA", "000"}:
         return "DECLINED"
     return "APPROVED"
 
@@ -1625,7 +1625,7 @@ def format_transaction_summary(
             field_line("RC_SPDH", spdh_rc),
             field_line("RC_ISO", network_rc),
             "",
-            field_line("Status", transaction_status(iso_rc, spdh_rc)),
+            field_line("Response status", transaction_status(iso_rc, spdh_rc)),
             SECTION_SEPARATOR,
         ]
     )

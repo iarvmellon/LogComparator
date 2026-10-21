@@ -168,7 +168,7 @@ class IsoCheckTests(unittest.TestCase):
 
     def test_row_color_priority(self):
         self.assertEqual(problem_row_tag('', 'Approved(000)', 'Approved(00)'), 'approved')
-        self.assertEqual(problem_row_tag('', '', 'Declined(05)'), '')
+        self.assertEqual(problem_row_tag('', '', 'Declined(05)'), 'approved')
         self.assertEqual(problem_row_tag('warning: missing response code', 'Approved(000)', 'Approved(00)'), 'warning')
         self.assertEqual(problem_row_tag('currency mismatch; warning: missing response code', '', ''), 'problem')
 

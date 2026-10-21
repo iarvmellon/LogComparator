@@ -249,6 +249,7 @@ async def comparison_data(token: str):
         return JSONResponse({'error': str(error)}, status_code=400)
 
 CSS = '''
+.response-code-alert { color:#b00020; font-weight:700; }
 body { background:#f0f0f0; color:#151515; font-family:Arial,sans-serif; }
 .q-page { padding:0; }
 .nicegui-content { padding:8px 12px; gap:12px; }
@@ -271,6 +272,12 @@ html, body { height:100%; overflow:hidden; }
 .data-time-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content; gap:14px; align-items:start; width:100%; }
 .data-panel, .time-panel { overflow:hidden; }
 .selection-controls { display:flex; align-items:center; gap:8px; height:40px; white-space:nowrap; }
+.selection-controls .viewer-filter { padding:4px 7px; border:1px solid #aaa; border-radius:3px; color:#151515; }
+.selection-controls .viewer-filter-approved { background:#c8f7c5; }
+.selection-controls .viewer-filter-warning { background:#fff2b3; }
+.selection-controls .viewer-filter-problem { background:#ff9999; }
+.selection-controls .viewer-filter-unknown { background:#fff; }
+
 .filters-panel { overflow-x:auto; }
 .time-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)) minmax(80px,.55fr); gap:8px; align-items:center; width:100%; }
 .time-controls > * { width:100%; min-width:0; }
@@ -1134,10 +1141,10 @@ def index():
             to_datetime = datetime_picker('To', '23:59:59')
             timezone = ui.select([f'UTC{i:+d}' if i else 'UTC' for i in range(-3, 4)], value='UTC', label='Timezone', on_change=change_timezone).props('outlined dense').classes('w-28')
 
-        with panel('Selection viewer'), ui.element('div').classes('selection-controls'):
+        with panel('Consistency viewer'), ui.element('div').classes('selection-controls'):
             viewer_filters = {
-                severity: ui.checkbox(label, value=True, on_change=refresh).props('dense').mark(f"viewer-{severity or 'unknown'}")
-                for severity, label in (('warning', 'Warnings'), ('problem', 'Errors'), ('approved', 'Succeeded'), ('', 'Unknown'))
+                severity: ui.checkbox(label, value=True, on_change=refresh).props('dense').classes(f"viewer-filter viewer-filter-{severity or 'unknown'}").mark(f"viewer-{severity or 'unknown'}")
+                for severity, label in (('approved', 'Consistent'), ('warning', 'Possible consistent'), ('problem', 'Inconsistent'), ('', 'Unknown'))
             }
 
     with panel('Filters').classes('w-full filters-panel'), ui.element('div').classes('filter-controls'):
@@ -1177,9 +1184,9 @@ def index():
     table.add_slot('body', '''
         <q-tr :props="props" :class="[props.row.severity, {selected: props.selected}]" @click="props.selected = !props.selected" @dblclick="event => { const a = event.currentTarget.ownerDocument.createElement('a'); a.href = props.row.preview_url; a.target = '_blank'; a.rel = 'noopener'; a.click(); }">
           <q-td auto-width @click.stop><q-checkbox dense size="sm" v-model="props.selected" aria-label="Select transaction" /></q-td>
-          <q-td v-for="col in props.cols" :key="col.name" :props="props" :style="col.style" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else>{{ col.value }}</span></q-td>
+          <q-td v-for="col in props.cols" :key="col.name" :props="props" :style="col.style" :title="col.name === 'possibleproblem' ? '' : String(col.value ?? '')"><a v-if="col.name === 'transuid'" :href="props.row.preview_url" target="_blank" rel="noopener" @click.stop>{{ col.value }}</a><span v-else-if="col.name === 'possibleproblem'">{{ String(col.value || '').length > 100 ? String(col.value).slice(0, 97) + '...' : col.value }}<q-tooltip v-if="col.value" style="max-width:70vw;white-space:pre-wrap;overflow-wrap:anywhere">{{ props.row.possibleproblem }}</q-tooltip></span><span v-else :class="{'response-code-alert': (col.name === 'responsecodeiso' &amp;&amp; props.row.responsecodeiso_alert) || (col.name === 'responsecodespdh' &amp;&amp; props.row.responsecodespdh_alert)}">{{ col.value }}</span></q-td>
           <q-menu context-menu touch-position><q-list style="min-width:140px">
-            <q-item v-for="action in ['Open', 'Export', 'Compare']" :key="action"
+            <q-item v-for="action in (($parent.$props.selected || $parent.$attrs.selected || []).length === 2 ? ['Open', 'Export', 'Compare'] : ['Open', 'Export'])" :key="action"
               :tag="action === 'Export' ? 'div' : 'a'"
               :href="action === 'Open' ? props.row.preview_url : '#'"
               target="_blank" rel="noopener" clickable v-close-popup
@@ -1196,9 +1203,10 @@ def index():
                 }
                 if (action === 'Compare') {
                   const url = opener.getAttribute('data-comparison-url');
-                  if (props.selected &amp;&amp; url) { event.currentTarget.href = url; return; }
+                  if (url) { event.currentTarget.href = url; return; }
                   event.preventDefault();
                 }
+                event.preventDefault();
                 $parent.$emit('context-action', {uid:props.row.transuid, action:action});
               }"><q-item-section>{{ action }}</q-item-section></q-item>
           </q-list></q-menu>
@@ -1207,6 +1215,10 @@ def index():
     async def context_action(event):
         if event.args.get('action') == 'tabs-blocked':
             ui.notify('Your browser blocked transaction tabs. Allow pop-ups for this site, then click Open again.', type='warning', timeout=10000)
+            return
+        if event.args.get('action') == 'Compare':
+            if len(table.selected) == 2:
+                await export_action('compare')
             return
         uid = event.args.get('uid')
         row = next((row for row in table.rows if row['transuid'] == uid), None)
