@@ -343,6 +343,23 @@ running the transferred image.
 The container is named `logComparator` and the image is `logcomparator_iarv:latest`.
 The Compose service is still named `logcomparator`, as used in Compose commands.
 
+Both `compose.yaml` and `compose.remote.yaml` explicitly select `Dockerfile` and declare only `logcomparator_iarv:latest` in their build tags and image name. Version releases with Git tags only. Every Docker build uses the single fixed image tag `logcomparator_iarv:latest`; do not create Docker version, test, or backup tags. Git version information can still be embedded in the application without changing the Docker image tag.
+
+On a build-capable Docker host, rebuild and recreate the service with:
+
+```sh
+sudo docker compose up -d --build --force-recreate logcomparator
+```
+
+For the Linux server without internet, use the Windows build and image-transfer instructions below instead. Those commands also build and transfer only `logcomparator_iarv:latest`.
+
+Reusing `latest` can leave old, unused images shown as `<none>`. To remove unused dangling images when needed:
+
+```sh
+sudo docker image prune -f
+```
+
+
 ### First deployment: configure the server
 
 Put the Compose files in the project directory on the Docker host.

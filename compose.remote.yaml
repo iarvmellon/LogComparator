@@ -3,6 +3,10 @@ services:
   logcomparator:
     build:
       context: .
+      dockerfile: Dockerfile
+      # Release versions use Git tags; Docker keeps only this fixed tag.
+      tags:
+        - logcomparator_iarv:latest
       args:
         BUILD_DESCRIBE: ${LOGCOMPARATOR_VERSION:-container}
         BUILD_GIT_HASH: ${LOGCOMPARATOR_GIT_HASH:-unknown}
