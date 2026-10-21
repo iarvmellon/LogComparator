@@ -259,6 +259,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 await user.should_see('Loaded transactions: 2', retries=100)
                 table = next(iter(user.find(ui.table).elements))
                 self.assertEqual(len(table.rows), 2)
+                self.assertFalse(table.props['virtual-scroll'])
                 live_timer = next(e for e in user.find(ui.timer).elements if e.interval == 0.25)
                 audit_file = audits / 'audit.OPNBISOBKT01.2026-10-14'
                 addition = audit_file.read_text().replace('ref: 123', 'ref: 789').replace('ref: 456', 'ref: 790')

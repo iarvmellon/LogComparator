@@ -155,10 +155,11 @@ export function installColumnSizing(component) {
     if (frame === null) frame = requestAnimationFrame(fit);
   };
   component.__logColumnSizer = schedule;
-  component.$watch(() => [table.rows, component.columns, table.visibleColumns], schedule);
+  component.$watch(() => [table.rows, component.columns, table.visibleColumns, table.virtualScroll, table.pagination], schedule);
   const observer = new MutationObserver(schedule);
   observer.observe(root, {attributes:true, attributeFilter:['style', 'data-column-revision']});
   const resizeObserver = new ResizeObserver(schedule);
-  resizeObserver.observe(root.querySelector('.q-table__middle') || root);
+  // The middle element is replaced when switching normal/virtual scrolling.
+  resizeObserver.observe(root);
   schedule();
 }

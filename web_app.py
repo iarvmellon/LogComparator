@@ -430,6 +430,19 @@ def index():
                     pass
         refresh()
 
+    def configure_table_scrolling():
+        # A bounded page already limits DOM size; virtual scrolling is unnecessary
+        # and can destabilize the end of short pages as rows are remeasured.
+        page_size = table.pagination.get('rowsPerPage', 100)
+        enabled = len(table.rows) > 100 and (page_size == 0 or page_size > 100)
+        changed = table.props.get('virtual-scroll', False) != enabled
+        table.props['virtual-scroll'] = enabled
+        return changed
+
+    def pagination_changed():
+        if configure_table_scrolling():
+            table.update()
+
     def clear_bank_results():
         nonlocal column_revision
         column_revision += 1
@@ -469,6 +482,7 @@ def index():
                     row['preview_url'] = f'/transaction/{preview_id}?' + urlencode({'uid': row['transuid']})
             selected_uids = {row['transuid'] for row in table.selected}
             table.selected = [row for row in table.rows if row['transuid'] in selected_uids]
+            configure_table_scrolling()
             table.update()
             update_actions()
             status.set_text(f'Loaded transactions: {len(loaded.rows)}; visible: {len(table.rows)}; selected: {len(table.selected)}')
@@ -1229,8 +1243,9 @@ def index():
 
     table = ui.table(columns=[dict(name=key, label=label, field='transuid_display' if key == 'transuid' else key, align='left', sortable=True) for key, label in COLUMNS],
                      rows=[], row_key='transuid', selection='multiple', pagination=100,
-                     on_select=selection_changed)
-    table.classes('log-table').props('dense flat bordered separator=cell virtual-scroll')
+                     on_select=selection_changed, on_pagination_change=pagination_changed)
+    table.classes('log-table').props('dense flat bordered separator=cell')
+    table.props['virtual-scroll'] = False
     table.props['visible-columns'] = [key for key, _ in COLUMNS]
 
     def install_table_sizing():

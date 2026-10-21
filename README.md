@@ -693,4 +693,4 @@ The TransUID column displays only identifiers present in the logs. Audit-only lo
 
 RC_SPDH and RC_ISO show the code first, followed by its description, for example `(000) Approved` or `(05) Do not honor`. Existing response-code emphasis and consistency colors are unchanged.
 
-The transaction list uses virtual scrolling for large results. Scroll to the bottom to view the last transactions on the current page; the list retains its position without wrapping back to the first rows. Table styling preserves the virtual-scroll spacer heights.
+The transaction list uses normal scrolling for pages of up to 100 transactions and for result lists containing at most 100 transactions. Larger pages (including All) use virtual scrolling to limit browser memory. Scroll to the bottom to view the last transactions on the current page; the list retains its position without wrapping back to the first rows. Table styling preserves the virtual-scroll spacer heights.
