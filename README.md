@@ -183,7 +183,7 @@ Click a row or its first-column checkbox to select or deselect it. Selected
 rows have a blue outline and keep their result color. You can select several rows.
 
 - **File > Export TRXs** exports individual transaction logs, using the existing export behavior.
-- **File > Export Results** downloads a standalone HTML report of the current filtered list, in its current sort order, across all pages. It includes only visible columns, selection marks, consistency colors and response-code styling. Long Possible problem descriptions remain available on hover. The top of the report records Generated files, Byte/Data, Audit blocks, selected date, Bank/Acquirer, live update, time range/timezone, enabled Consistency viewer options and active filters. It exports the list without generating individual transaction logs.
+- **File > Export Results** opens a standalone HTML report in a new browser tab of the current filtered list, in its current sort order, across all pages. It includes only visible columns, selection marks, consistency colors and response-code styling. Long Possible problem descriptions remain available on hover. The top of the report records Generated files, Byte/Data, Audit blocks, selected date, Bank/Acquirer, live update, time range/timezone, enabled Consistency viewer options and active filters. It exports the list without generating individual transaction logs.
 - **Open** opens selected transaction logs in separate browser tabs.
   You can also click a **TransUID** or double-click a row to open its log.
 - **Download log**, in the transaction tab, saves the complete log.

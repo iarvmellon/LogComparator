@@ -42,6 +42,7 @@ PREVIEW_DOWNLOADS = OrderedDict()
 PREVIEW_TASKS = OrderedDict()
 PREVIEW_SAVES = OrderedDict()
 COMPARISONS = OrderedDict()
+RESULTS_REPORTS = OrderedDict()
 WEB_OUTPUT = core.DEFAULT_OUTPUT
 register_assets()
 # The reconnect overlay is rendered by NiceGUI outside the page content.
@@ -49,6 +50,14 @@ translations['en-US'].update(
     connection_lost='Browser <-> LogComparator connection lost.',
     trying_to_reconnect='Trying to reconnect the browser to LogComparator...',
 )
+
+
+@app.get('/results-report/{token}')
+def results_report_page(token: str):
+    path = RESULTS_REPORTS.get(token)
+    if path is None:
+        return HTMLResponse('This results report is no longer available. Export Results again.', status_code=404)
+    return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/health')
@@ -794,7 +803,14 @@ def index():
             if loaded is not snapshot or table.rows is not source_rows:
                 raise ValueError('The results changed during export. Please export again.')
             document = await run.io_bound(render_results_report, rows, columns, settings, selected_uids)
-            ui.download.content(document.encode('utf-8'), f'LogComparator-Results-{snapshot.selected_date}.html', media_type='text/html')
+            token = uuid.uuid4().hex
+            report_path = Path(WORKSPACE.name) / f'results-{token}.html'
+            await run.io_bound(report_path.write_text, document, encoding='utf-8')
+            RESULTS_REPORTS[token] = report_path
+            while len(RESULTS_REPORTS) > 128:
+                _, expired = RESULTS_REPORTS.popitem(last=False)
+                expired.unlink(missing_ok=True)
+            ui.navigate.to(f'/results-report/{token}', new_tab=True)
             status.set_text(f'Exported results: {len(rows)} transactions.')
         await perform(action)
 
