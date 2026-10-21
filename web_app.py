@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import psutil
 import asyncio
 import inspect
@@ -337,7 +338,7 @@ html, body { height:100%; overflow:hidden; }
 
 
 class ApplicationResources:
-    """Sample overall system CPU and resident application/worker memory."""
+    """Sample system CPU, available system memory and free space on the application filesystem."""
 
     @staticmethod
     def cpu_snapshot():
@@ -347,26 +348,27 @@ class ApplicationResources:
         return total, idle
 
     def __init__(self):
-        self.parent = psutil.Process()
         self.previous_cpu = self.cpu_snapshot()
 
     def sample(self):
+        try:
+            target = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+            disk = psutil.disk_usage(str(target))
+            disk_status = f'Disk free: {disk.free / (1024 ** 3):,.1f} GiB'
+        except OSError:
+            disk_status = 'Disk free: unavailable'
         total, idle = self.cpu_snapshot()
         elapsed = total - self.previous_cpu[0]
         idle_elapsed = idle - self.previous_cpu[1]
         self.previous_cpu = total, idle
         cpu = max(0.0, min(100.0, 100 * (1 - idle_elapsed / elapsed))) if elapsed > 0 else 0.0
         try:
-            active = [self.parent, *self.parent.children(recursive=True)]
-        except psutil.Error:
-            return f'System CPU: {cpu:.1f}% | App RAM: unavailable'
-        memory = 0
-        for process in active:
-            try:
-                memory += process.memory_info().rss
-            except psutil.Error:
-                continue  # A worker can exit between discovery and sampling.
-        return f'System CPU: {cpu:.1f}% | App RAM: {memory / (1024 ** 2):,.0f} MiB'
+            memory = psutil.virtual_memory().available
+            memory_status = f'System RAM available: {memory / (1024 ** 3):,.1f} GiB'
+        except OSError:
+            memory_status = 'System RAM available: unavailable'
+        return f'System CPU: {cpu:.1f}% | {memory_status} | {disk_status}'
+
 
 
 @ui.page('/', title=f'LogComparator {core.APP_BUILD_DESCRIBE}')
@@ -1076,23 +1078,6 @@ def index():
         dialog.open()
         await inspect_remote()
 
-    def settings_dialog():
-        with ui.dialog() as dialog, ui.card().classes('w-[620px] max-w-[95vw]'):
-            ui.label('Settings').classes('text-lg')
-            output_input = ui.input('Output folder', value=str(session_settings.output)).props('outlined dense').classes('w-full')
-            ui.button('Browse output folder', on_click=lambda: browse_folder(output_input.value, output_input.set_value)).props('outline dense')
-            def save():
-                if not (output_input.value or '').strip():
-                    ui.notify('Fill in the required settings.', type='warning')
-                    return
-                session_settings.output = Path(output_input.value).expanduser().resolve()
-                update_preview_options()
-                status.set_text(f'Settings updated. Output folder: {session_settings.output}')
-                dialog.close()
-            ui.button('Save settings', on_click=save)
-            ui.button('Cancel', on_click=dialog.close).props('flat')
-        dialog.open()
-
     def export_options_dialog():
         with ui.dialog() as dialog, ui.card():
             ui.label('Export options').classes('text-lg')
@@ -1149,7 +1134,6 @@ def index():
                         ui.menu_item('Export all TRXs', on_click=lambda: export_action('download_all')).mark('export-trxs-menu')
                         ui.menu_item('Export selected TRXs', on_click=lambda: export_action('download_selected')).mark('export-selected-trxs-menu')
                         ui.menu_item('Export Results', on_click=export_results).mark('export-results-menu')
-                        ui.menu_item('Settings', on_click=settings_dialog).mark('settings-menu')
                     elif label == 'Edit':
                         ui.menu_item('Clear filters', on_click=clear_filters)
                         ui.menu_item('Select all visible', on_click=lambda: (setattr(table, 'selected', list(table.rows)), table.update(), selection_changed()))
@@ -1334,7 +1318,7 @@ def index():
         resources = ApplicationResources()
         resource_status = ui.label(resources.sample()).classes('status text-gray-600')
         with resource_status:
-            ui.tooltip('Overall system CPU (0-100%). App RAM: server and parser workers, summed resident memory (shared pages may be counted more than once).')
+            ui.tooltip('Overall system CPU (0-100%). System RAM available: memory available for applications, including reclaimable memory, in GiB. Disk free: available space on the partition containing the application (the executable folder on Windows, or /app in Docker).')
         ui.label(f'LogComparator {core.APP_BUILD_DESCRIBE} - Web').classes('status text-gray-600')
     for control in (protocol, byte_data, internal, outbound, inbound):
         control.on_value_change(update_preview_options)

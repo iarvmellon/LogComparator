@@ -587,15 +587,7 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 with user:
                     selects['Bank/Acquirer'].set_value('AKTIF/BKTKOS')
                 await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
-                user.find(marker='settings-menu').click()
-                await user.should_see('Output folder')
-                settings_inputs = {e.props.get('label'): e for e in user.find(ui.input).elements}
-                self.assertNotIn('SSH user', settings_inputs)
-                self.assertNotIn('Sudo password (leave empty to keep current)', settings_inputs)
-                with user:
-                    settings_inputs['Output folder'].set_value(str(folder / 'saved'))
-                user.find('Save settings').click()
-                await user.should_see('Settings updated.')
+                self.assertFalse(any(e.text == 'Settings' for e in user.find(ui.item_section).elements))
                 user.find(marker='export-options-menu').click()
                 await user.should_see('Export options')
                 user.find(kind=ui.button, content='Close').click()

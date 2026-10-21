@@ -214,8 +214,7 @@ all transactions that pass the filters. One transaction downloads as a log file;
 several transactions download together in a ZIP file.
 
 The generated logs are also saved in the application's output folder.
-Use **File > Settings**, change **Output folder**, and click **Save settings**
-to choose that destination. This folder is on the computer or server running
+Set `LOGCOMPARATOR_OUTPUT` before starting the application to choose that destination. This folder is on the computer or server running
 LogComparator, rather than the computer displaying the browser.
 
 ### Choosing what the generated logs contain
@@ -252,7 +251,7 @@ If the generated logs are identical, the page says so.
 
 | Menu | Available actions |
 | --- | --- |
-| **File** | Import local logs, Import remote logs (UAT), Export all TRXs, Export selected TRXs, Export Results, and Settings. |
+| **File** | Import local logs, Import remote logs (UAT), Export all TRXs, Export selected TRXs, and Export Results. |
 | **Edit** | Clear text filters, select all visible transactions, or clear the selection. |
 | **View > Columns / Filters** | Show or hide columns and their corresponding text filters. Hiding a filter also clears its value. Possible problem stays available. |
 | **View > Increase / Decrease font size** | Make the transaction list text larger or smaller. |
@@ -574,8 +573,8 @@ its logs report a missing application module.
 ## Configuration
 
 Source runs support `LOGCOMPARATOR_LOG_DIR`, `LOGCOMPARATOR_AUDIT_DIR`,
-`LOGCOMPARATOR_OUTPUT` and `LOGCOMPARATOR_CACHE`. **File > Settings** changes
-the export destination. **Tools > Export options** controls included protocols,
+`LOGCOMPARATOR_OUTPUT` and `LOGCOMPARATOR_CACHE`. Set `LOGCOMPARATOR_OUTPUT` to choose
+the export destination before startup. **Tools > Export options** controls included protocols,
 byte data and audit directions.
 
 The UI has no login; use it on a trusted internal network.
@@ -688,4 +687,4 @@ Audit imports of 32 MiB or more use four parser processes by default. Small text
 
 Set `LOGCOMPARATOR_PARSE_WORKERS` to `1` to disable parallel parsing, or `2` to `4` to choose the maximum number of workers (also limited by available CPUs). For Docker Compose, `.env.docker.example` includes `LOGCOMPARATOR_PARSE_WORKERS=4`. Copy it to `.env`, or update your existing `.env`, and recreate the container after changing this setting. The default is four workers; set it to two to reduce CPU and memory use. Only a bounded number of batches is queued; transaction results and existing source caches still require memory proportional to the data. Background preparation continues to yield to foreground requests. Actual speedup depends on CPU, disk speed and log contents.
 
-The bottom status line shows **System CPU** (overall system utilization, 0-100%) and **App RAM**, refreshed every two seconds. In Docker, system CPU refers to the CPU statistics visible inside the container. App RAM measures the LogComparator server and its parser workers, rather than the browser or the whole host. RAM is summed resident memory in MiB; shared pages between processes may be counted more than once.
+The bottom status line shows **System CPU** (overall system utilization, 0-100%), **System RAM available** and **Disk free**, refreshed every two seconds. Disk free shows available space in GiB on the partition containing the application: the executable folder for the Windows build, or the source folder when running Python (`/app` in Docker). In Docker, system CPU refers to the CPU statistics visible inside the container. System RAM available shows memory available for applications in GiB, including reclaimable cache, as reported by the operating system visible to the server.
