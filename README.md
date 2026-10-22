@@ -349,6 +349,35 @@ running the transferred image.
 The container is named `logComparator` and the image is `logcomparator_iarv:latest`.
 The Compose service is still named `logcomparator`, as used in Compose commands.
 
+### Docker CPU limit
+
+Both Compose files set `cpus: 4.8` for the whole LogComparator container, including its parser workers. **The purpose of this setting is to keep the calculated combined CPU usage of LogComparator and the existing Tango workload at or below approximately 96.7% on both production systems we use: the 8-logical-CPU primary and the 6-logical-CPU secondary.** This sizing assumes Tango consumes the equivalent of one full logical CPU and there is no additional load. We choose the smaller secondary system as the reference: its calculated combined ceiling is approximately 96.7%, while the primary's is 72.5%. Docker enforces the 4.8-CPU limit for LogComparator; it does not enforce a 96.7% limit for the whole server. The four parser workers alone do not enforce a container-wide CPU ceiling.
+
+The primary system has **8 logical CPUs**, and the secondary system has **6 logical CPUs**. The same fixed setting applies to both:
+
+| System | Logical CPUs | LogComparator ceiling | Estimated total with Tango consuming one full logical CPU |
+| --- | --- | --- | --- |
+| Primary | 8 | 4.8 CPUs = 60% | (4.8 + 1) / 8 = 72.5% |
+| Secondary | 6 | 4.8 CPUs = 80% | (4.8 + 1) / 6 = approximately 96.7% |
+
+On the secondary system, LogComparator can consume up to 4.8 logical CPUs while the existing Tango operation consumes one full logical CPU. Together, these two workloads can bring total CPU usage to approximately **96.7%**, leaving approximately **3.3%** capacity. **The approximately 96.7% estimate applies only when the application workloads are Tango and LogComparator, with Tango consuming one full logical CPU. It does not apply when additional applications, such as a simulator, run on the same server. In that case, recalculate and reduce the LogComparator CPU limit to leave capacity for those applications before using the same combined-usage target.** Other services and operating-system work can also increase total usage beyond this estimate. The Docker setting caps LogComparator at 4.8 CPUs, not the whole machine at 96.7%. CPU time is shared across logical CPUs; no particular core is reserved for Tango.
+
+This is a fixed limit, not automatic detection of the CPU count or background load. Check the available logical CPU count on the Docker host, outside the container, with `nproc`. The limit applies to LogComparator rather than total server usage; individual logical CPUs can still reach 100%. CPU quotas are enforced over scheduling intervals, so monitoring samples can briefly show higher values. Actual use can be below the ceiling, and processing may take longer when the quota is reached. The Windows executable is unaffected.
+
+To apply the limit to an existing server, copy the updated Compose file there and recreate the service from its project directory (this briefly interrupts the application):
+
+```sh
+sudo docker compose up -d --no-build --pull never --force-recreate logcomparator
+```
+
+For remote-only mode, use `sudo docker compose -f compose.remote.yaml up -d --no-build --pull never --force-recreate logcomparator` instead. No image rebuild or Linux package installation is needed for this setting. Verify the applied limit with:
+
+```sh
+sudo docker inspect logComparator --format '{{.HostConfig.NanoCpus}}'
+```
+
+The expected value is `4800000000`. These Compose settings do not apply to containers started directly with `docker run` unless the equivalent `--cpus=4.8` option is supplied.
+
 Both `compose.yaml` and `compose.remote.yaml` explicitly select `Dockerfile` and declare only `logcomparator_iarv:latest` in their build tags and image name. Version releases with Git tags only. Every Docker build uses the single fixed image tag `logcomparator_iarv:latest`; do not create Docker version, test, or backup tags. Git version information can still be embedded in the application without changing the Docker image tag.
 
 On a build-capable Docker host, rebuild and recreate the service with:
