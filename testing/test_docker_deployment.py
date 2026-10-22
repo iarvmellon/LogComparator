@@ -32,6 +32,9 @@ class DockerDeploymentTests(unittest.TestCase):
                                               "/home/user/project's folder", 'compose.yaml')
         self.assertIn("cd "+shlex.quote("/home/user/project's folder"), command)
         self.assertIn('docker load -i logcomparator.tar', command)
+        self.assertIn('sh ./docker_compose.sh -f compose.yaml config --quiet', command)
+        self.assertIn('sh ./docker_compose.sh -f compose.yaml up', command)
+        self.assertIn('docker_compose.sh', helpers['SUPPORT_FILES'])
         self.assertIn('docker image inspect logcomparator_iarv:latest', command)
         self.assertIn('--no-build --pull never --force-recreate logcomparator', command)
         self.assertNotIn('docker build', command)
@@ -76,7 +79,7 @@ class DockerDeploymentTests(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(RuntimeError, 'checksum mismatch'):
                             run()
-                self.assertEqual(len(uploads), 5)
+                self.assertEqual(len(uploads), 1 + len(helpers['SUPPORT_FILES']))
                 self.assertEqual(any('docker load' in command for command in calls), correct)
                 self.assertTrue(calls[-1].startswith('rm -f --'))
                 self.assertNotIn('rm -rf', calls[-1])

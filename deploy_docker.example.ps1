@@ -34,7 +34,7 @@ import uuid
 from scp import SCPClient
 from remote_logs import RemoteConnection, connect
 IMAGE = 'logcomparator_iarv:latest'
-SUPPORT_FILES = ('compose.yaml', 'compose.remote.yaml', 'README.md', '.env.docker.example')
+SUPPORT_FILES = ('compose.yaml', 'compose.remote.yaml', 'README.md', '.env.docker.example', 'docker_compose.sh')
 def remote_directory(value):
     path = PurePosixPath(value)
     if (not path.is_absolute() or '..' in path.parts or len(path.parts) < 3
@@ -90,7 +90,7 @@ def install_command(stage, destination, compose_file):
         mode = '600' if name.endswith('.tar') else '644'
         commands += [f'install -m {mode} -- {source} {temporary}',
                      f'mv -f -- {temporary} {target}']
-    compose = 'docker compose -f ' + shlex.quote(compose_file)
+    compose = 'sh ./docker_compose.sh -f ' + shlex.quote(compose_file)
     commands += [compose + ' config --quiet',
                  'docker load -i logcomparator.tar',
                  'docker image inspect ' + shlex.quote(IMAGE) + ' >/dev/null',

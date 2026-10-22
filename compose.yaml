@@ -11,8 +11,8 @@ services:
         BUILD_GIT_HASH: ${LOGCOMPARATOR_GIT_HASH:-unknown}
     image: logcomparator_iarv:latest
     container_name: logComparator
-    # Cap the entire container at 4.8 CPUs (80% of secondary; 60% of primary).
-    cpus: 4.8
+    # docker_compose.sh detects host CPUs and leaves one CPU for Tango.
+    cpus: "${LOGCOMPARATOR_CPU_LIMIT:?Run Compose through sh ./docker_compose.sh on the Docker host}"
     restart: unless-stopped
     init: true
     ports:

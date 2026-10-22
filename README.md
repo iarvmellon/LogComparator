@@ -349,41 +349,41 @@ running the transferred image.
 The container is named `logComparator` and the image is `logcomparator_iarv:latest`.
 The Compose service is still named `logcomparator`, as used in Compose commands.
 
-### Docker CPU limit
+### Automatic Docker CPU limit
 
-Both Compose files set `cpus: 4.8` for the whole LogComparator container, including its parser workers. **The purpose of this setting is to keep the calculated combined CPU usage of LogComparator and the existing Tango workload at or below approximately 96.7% on both production systems we use: the 8-logical-CPU primary and the 6-logical-CPU secondary.** This sizing assumes Tango consumes the equivalent of one full logical CPU and there is no additional load. We choose the smaller secondary system as the reference: its calculated combined ceiling is approximately 96.7%, while the primary's is 72.5%. Docker enforces the 4.8-CPU limit for LogComparator; it does not enforce a 96.7% limit for the whole server. The four parser workers alone do not enforce a container-wide CPU ceiling.
+Use `sudo sh ./docker_compose.sh` instead of `sudo docker compose` for this project. The helper queries the **Docker daemon's logical CPU count** with `docker info --format '{{.NCPU}}'`, subtracts one CPU for the existing Tango workload, and exports `LOGCOMPARATOR_CPU_LIMIT` to Compose. This avoids counting the Windows build machine's CPUs during deployment. Both Compose files require this value and apply it to the entire container, including the main process, parser workers and threads. There is no unlimited or fixed 4.8-CPU fallback.
 
-The primary system has **8 logical CPUs**, and the secondary system has **6 logical CPUs**. The same fixed setting applies to both:
+**The sizing target is for Tango plus LogComparator to use no more than 100% of the machine's CPU capacity, assuming Tango uses at most one logical CPU and no additional workloads are present.** It replaces the previous fixed 4.8-CPU setting:
 
-| System | Logical CPUs | LogComparator ceiling | Estimated total with Tango consuming one full logical CPU |
+| System | Logical CPUs | Automatic LogComparator ceiling | Combined with Tango at one full CPU |
 | --- | --- | --- | --- |
-| Primary | 8 | 4.8 CPUs = 60% | (4.8 + 1) / 8 = 72.5% |
-| Secondary | 6 | 4.8 CPUs = 80% | (4.8 + 1) / 6 = approximately 96.7% |
+| Primary | 8 | 7 CPUs = 87.5% | (7 + 1) / 8 = 100% |
+| Secondary | 6 | 5 CPUs = approximately 83.3% | (5 + 1) / 6 = 100% |
 
-On the secondary system, LogComparator can consume up to 4.8 logical CPUs while the existing Tango operation consumes one full logical CPU. Together, these two workloads can bring total CPU usage to approximately **96.7%**, leaving approximately **3.3%** capacity. **The approximately 96.7% estimate applies only when the application workloads are Tango and LogComparator, with Tango consuming one full logical CPU. It does not apply when additional applications, such as a simulator, run on the same server. In that case, recalculate and reduce the LogComparator CPU limit to leave capacity for those applications before using the same combined-usage target.** Other services and operating-system work can also increase total usage beyond this estimate. The Docker setting caps LogComparator at 4.8 CPUs, not the whole machine at 96.7%. CPU time is shared across logical CPUs; no particular core is reserved for Tango.
+This is a CPU-time allowance, not a dedicated core reserved for Tango. **It does not monitor Tango's actual usage or guarantee a total-system ceiling or absence of contention.** If Tango uses more than one CPU, or other applications such as a simulator run on the host, this calculation leaves insufficient headroom; a lower limit is required. Operating-system work also needs CPU time. Actual LogComparator usage can be below the ceiling, and an individual logical CPU can still run at 100%.
 
-This is a fixed limit, not automatic detection of the CPU count or background load. Check the available logical CPU count on the Docker host, outside the container, with `nproc`. The limit applies to LogComparator rather than total server usage; individual logical CPUs can still reach 100%. CPU quotas are enforced over scheduling intervals, so monitoring samples can briefly show higher values. Actual use can be below the ceiling, and processing may take longer when the quota is reached. The Windows executable is unaffected.
+Detection runs on every helper invocation, including automatic deployment and manual recreation. Docker retains the resulting quota across ordinary container restarts; if the host CPU allocation changes, recreate the container through the helper to recalculate it. A CPU count of one or an invalid/unavailable count stops the operation rather than starting an unlimited container. This does not change the Windows executable or the maximum of four parser workers.
 
-To apply the limit to an existing server, copy the updated Compose file there and recreate the service from its project directory (this briefly interrupts the application):
+To apply the automatic limit to an existing server, copy the updated Compose files and `docker_compose.sh` there, then run from its project directory (recreation briefly interrupts the application):
 
 ```sh
-sudo docker compose up -d --no-build --pull never --force-recreate logcomparator
+sudo sh ./docker_compose.sh up -d --no-build --pull never --force-recreate logcomparator
 ```
 
-For remote-only mode, use `sudo docker compose -f compose.remote.yaml up -d --no-build --pull never --force-recreate logcomparator` instead. No image rebuild or Linux package installation is needed for this setting. Verify the applied limit with:
+For remote-only mode, add `-f compose.remote.yaml` immediately after `docker_compose.sh`. No image rebuild or Linux package installation is needed for this setting. The helper prints the detected CPU count and calculated limit. Verify the applied quota with:
 
 ```sh
 sudo docker inspect logComparator --format '{{.HostConfig.NanoCpus}}'
 ```
 
-The expected value is `4800000000`. These Compose settings do not apply to containers started directly with `docker run` unless the equivalent `--cpus=4.8` option is supplied.
+Expected values are `7000000000` on the primary and `5000000000` on the secondary. Automatic deployment transfers the helper and invokes it on the server; it preserves the existing `.env`. The helper overrides stale `LOGCOMPARATOR_CPU_LIMIT` environment values with the current calculation. Containers started directly with `docker run` are outside this workflow and require an explicit `--cpus` limit.
 
 Both `compose.yaml` and `compose.remote.yaml` explicitly select `Dockerfile` and declare only `logcomparator_iarv:latest` in their build tags and image name. Version releases with Git tags only. Every Docker build uses the single fixed image tag `logcomparator_iarv:latest`; do not create Docker version, test, or backup tags. Git version information can still be embedded in the application without changing the Docker image tag.
 
 On a build-capable Docker host, rebuild and recreate the service with:
 
 ```sh
-sudo docker compose up -d --build --force-recreate logcomparator
+sudo sh ./docker_compose.sh up -d --build --force-recreate logcomparator
 ```
 
 For the Linux server without internet, use the Windows build and image-transfer instructions below instead. Those commands also build and transfer only `logcomparator_iarv:latest`.
@@ -397,7 +397,7 @@ sudo docker image prune -f
 
 ### First deployment: configure the server
 
-Put the Compose files in the project directory on the Docker host.
+Put the Compose files and `docker_compose.sh` in the project directory on the Docker host.
 For a first deployment, create `.env` from the supplied example:
 
 ```sh
@@ -429,11 +429,11 @@ without internet** below. Do not run a build on that server.
 For a Docker host **with internet**, build and start from the project directory:
 
 ```sh
-sudo docker compose build
+sudo sh ./docker_compose.sh build
 ```
 
 Create the HTTPS certificate as described below, then start with
-`sudo docker compose up -d --no-build --pull never`.
+`sudo sh ./docker_compose.sh up -d --no-build --pull never`.
 
 Open `https://<server-IP>:4020`. The default mapping is host **4020** to container
 **8080**. `LOGCOMPARATOR_PORT` changes the external port.
@@ -450,8 +450,8 @@ inside the container. Exports, cache and state use named volumes.
 For a host without local Tango directories, use remote import mode:
 
 ```sh
-sudo docker compose -f compose.remote.yaml build
-sudo docker compose -f compose.remote.yaml up -d --no-build --pull never
+sudo sh ./docker_compose.sh -f compose.remote.yaml build
+sudo sh ./docker_compose.sh -f compose.remote.yaml up -d --no-build --pull never
 ```
 
 Use the same Compose file for subsequent operations in that mode.
@@ -536,7 +536,7 @@ Copy these files to the project directory on the server, using SFTP/SCP or your
 usual transfer tool. Connect as `j.arvanitis`:
 
 - `logcomparator.tar`: the image built above.
-- `compose.yaml` and `compose.remote.yaml`: the current deployment settings.
+- `compose.yaml`, `compose.remote.yaml` and `docker_compose.sh`: the current deployment settings and automatic CPU-limit helper.
 - The certificate generator is included in the image; keep the server certificate folder on Linux.
 - `README.md`: this guide, if you want a copy outside the image.
 
@@ -555,7 +555,7 @@ cd /home/j.arvanitis/projects/LogComparator
 sudo docker load -i logcomparator.tar
 # First installation: create the HTTPS certificate using the section above.
 # Updates: reuse the existing certificate folder.
-sudo docker compose up -d --no-build --pull never --force-recreate
+sudo sh ./docker_compose.sh up -d --no-build --pull never --force-recreate
 ```
 
 `docker load` imports the image from the transferred file. `--no-build` prevents
@@ -566,7 +566,7 @@ If the server has no local Tango folders and you use remote import only, replace
 the last command with:
 
 ```sh
-sudo docker compose -f compose.remote.yaml up -d --no-build --pull never --force-recreate
+sudo sh ./docker_compose.sh -f compose.remote.yaml up -d --no-build --pull never --force-recreate
 ```
 
 Use the same Compose file for later status, log and update commands.
@@ -575,8 +575,8 @@ Recreating the container preserves its existing data volumes.
 **4. Check that the application is ready.**
 
 ```sh
-sudo docker compose ps
-sudo docker compose logs --tail=100 logcomparator
+sudo sh ./docker_compose.sh ps
+sudo sh ./docker_compose.sh logs --tail=100 logcomparator
 sudo curl --fail --cacert certs/server.crt https://127.0.0.1:4020/health
 ```
 
@@ -592,8 +592,8 @@ will restore the old application.
 ### Check the service
 
 ```sh
-docker compose ps
-docker compose logs --tail=100 logcomparator
+sudo sh ./docker_compose.sh ps
+sudo sh ./docker_compose.sh logs --tail=100 logcomparator
 sudo curl --fail --cacert certs/server.crt https://127.0.0.1:4020/health
 ```
 

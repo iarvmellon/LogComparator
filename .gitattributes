@@ -1,0 +1,3 @@
+
+# Linux deployment helper must remain usable after a Windows checkout.
+docker_compose.sh text eol=lf
