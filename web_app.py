@@ -788,7 +788,7 @@ def index():
             saved_to = await run.io_bound(publish_exports, paths, loaded, session_settings.output)
             if mode in ('download', 'download_all', 'download_selected'):
                 if len(paths) == 1:
-                    ui.download.file(paths[0])
+                    ui.download.content(await run.io_bound(paths[0].read_bytes), paths[0].name)
                 else:
                     def archive():
                         buffer = io.BytesIO()
@@ -1185,7 +1185,7 @@ def index():
             inbound = ui.checkbox('Network→Tango', value=True).props('dense')
         selected_date = ui.label('Selected date:  Not selected').classes('text-sm selected-date')
         open_button = ui.button('Open', on_click=toolbar_open).props('outline dense').classes('w-24 toolbar-action')
-        export_button = ui.button('Export', on_click=export_action).props('outline dense').classes('w-24 toolbar-action')
+        export_button = ui.button('Export', on_click=lambda: export_action('download')).props('outline dense').classes('w-24 toolbar-action')
         compare_button = ui.button('Compare', on_click=toolbar_compare).props('outline dense').classes('w-24 toolbar-action')
 
     def datetime_picker(label, default_time):

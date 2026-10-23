@@ -591,6 +591,15 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.content.startswith(b'PK'))
                 with user:
+                    table.selected = [table.rows[0]]
+                    table.update()
+                user.find(kind=ui.button, content='Export').click()
+                response = await user.download.next(timeout=10)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('Process name : OPNBISOBKT01', response.text)
+                self.assertIn('auditNumber : asc<000115>', response.text)
+                self.assertNotIn('auditNumber : asc<000116>', response.text)
+                with user:
                     selects['Bank/Acquirer'].set_value('AKTIF/BKTKOS')
                 await user.should_see('Selected date:  2026-10-14  |  AKTIF/BKTKOS', retries=100)
                 self.assertFalse(any(e.text == 'Settings' for e in user.find(ui.item_section).elements))

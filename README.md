@@ -729,3 +729,5 @@ The transaction list uses normal scrolling for pages of up to 100 transactions a
 The transaction log opened with **Open** or a transaction link uses a scrollable viewer that fits the browser window. Long lines remain unwrapped, with horizontal scrolling at the bottom of the viewer, visible without going to the end of the log. The download and log-loading controls stay outside the scrolling text.
 
 **Export Results** also keeps the results table in a viewer that fits the browser window, with horizontal and vertical scrolling inside the table area. This applies to newly generated HTML reports. Exported `.log` files are plain text; their scrolling and line wrapping depend on the text editor used to open them.
+
+The toolbar **Export** button downloads the selected transactions, or all filtered transactions when none are selected. One transaction downloads as a `.log` file; multiple transactions download as a ZIP. The button explicitly selects download mode so a browser click cannot be mistaken for an export mode.
